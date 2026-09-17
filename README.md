@@ -1,0 +1,242 @@
+# ✈️ 機票價格追蹤器
+
+每天自動查你指定的航線票價，存成歷史紀錄，發現便宜票就推到你手機上。
+出發地和目的地都可以填**多個點**，也支援**多段行程**（東京進、大阪出）。
+
+通知走 **LINE** 和 **ntfy.sh**。
+
+```
+每天 09:00（台灣時間）
+   ↓
+GitHub Actions 跑 tracker
+   ↓
+查 Google Flights 票價（fast-flights）
+   ↓
+寫進 data/prices.csv（commit 回 repo，等於免費的歷史資料庫）
+   ↓
+低於門檻 or 比近期中位數便宜一截 → 推 LINE / ntfy
+```
+
+---
+
+## 快速開始
+
+```bash
+pip install -e .
+
+# 臨時查一次（不用設定檔）
+python -m tracker.cli query TPE NRT --depart 2026-12-20 --nights 7
+
+# 一個出發地比多個目的地，找最便宜的那個
+python -m tracker.cli query TPE NRT,KIX,FUK --depart 2026-12-20 --nights 5
+
+# 先看看會查哪些組合，不連網
+python -m tracker.cli run --dry-run
+```
+
+---
+
+## 設定航線：`routes.yaml`
+
+這是唯一需要你編輯的檔案。內附的三條是範例，可以整段刪掉換成自己的。
+
+機場代碼用 IATA 三碼。也可以用**城市代碼**一次涵蓋多個機場：`TYO` = NRT + HND、`OSA` = KIX + ITM、`NYC` = JFK + LGA + EWR。
+
+### 模式 A：單純兩地
+
+```yaml
+routes:
+  - name: 台北-東京
+    from: TPE
+    to: TYO
+    trip: round               # round | oneway | multi
+    windows:
+      - depart: 2026-12-20
+        nights: 7
+    alert_below: 12000        # 低於這個價（TWD）就通知
+    alert_drop_pct: 15        # 或比近 30 天中位數便宜 15% 也通知
+```
+
+兩個門檻是**獨立**的，設一個或兩個都可以，任一成立就通知。
+`alert_drop_pct` 需要累積至少 3 筆同行程的歷史才會生效——第一次跑不會因為沒有基準線就亂叫。
+
+### 模式 B：多個點互相比價
+
+`from` 和 `to` 都吃清單，會做笛卡兒展開：
+
+```yaml
+  - name: 日本隨便飛
+    from: [TPE, KHH]          # 2 個出發地
+    to: [NRT, KIX, FUK]       # × 3 個目的地 = 6 條航線
+    trip: round
+    compare: true             # 報表會把這組依目的地排名
+    exclude:
+      - [KHH, FUK]            # 排除不想要的組合
+    windows:
+      - depart_range: [2026-12-01, 2026-12-31]   # 區間內每天各查一次
+        nights: 4
+    alert_below: 10000
+```
+
+設了 `compare: true` 之後：
+
+```bash
+python -m tracker.cli report --group 日本隨便飛
+```
+
+```
+近 30 天最低價（群組：日本隨便飛，每個目的地取最低）
+────────────────────────────────────────────────────────────
+ 1. TPE>KIX>TPE     8,898 TWD  2026-12-06~2026-12-10  EVA Air/Peach
+ 2. KHH>KIX>KHH     9,906 TWD  2026-12-06~2026-12-10  EVA Air/Peach
+ 3. KHH>NRT>KHH    10,123 TWD  2026-12-06~2026-12-10  EVA Air/Peach
+```
+
+> ⚠️ **會爆量**：`2 個出發地 × 3 個目的地 × 31 天 = 186 次查詢`。
+> 超過 `max_queries`（預設 60）會直接中止並告訴你實際數量，不會硬跑到被 Google 擋。
+> 先用 `--dry-run` 看展開結果。
+
+### 模式 C：多段行程
+
+```yaml
+  - name: 東京進大阪出
+    trip: multi
+    legs:
+      - { from: TPE, to: NRT, depart: 2027-01-10 }
+      - { from: KIX, to: TPE, depart: 2027-01-17 }
+    alert_below: 15000
+```
+
+---
+
+## 設定通知
+
+兩個管道都是**設了才啟用**，可以只設一個、也可以兩個都設。
+在 GitHub repo 的 **Settings → Secrets and variables → Actions → New repository secret** 填。
+
+都沒設的話，在 Actions 裡會退回開 GitHub Issue（手機裝 GitHub App 也會收到推播），不會把便宜票默默丟掉。
+
+### ntfy.sh（3 分鐘，推薦先設這個）
+
+1. 產一個夠亂的主題名：
+
+   ```bash
+   python3 -c "import secrets; print('flight-' + secrets.token_hex(8))"
+   ```
+
+2. 手機裝 [ntfy App](https://ntfy.sh/)（[iOS](https://apps.apple.com/app/ntfy/id1625396347) / [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)），按 + 訂閱剛剛那個主題名。
+3. 把主題名存成 secret `NTFY_TOPIC`。
+
+> 🔒 **主題名就是密碼**。在公開的 ntfy.sh 上，任何知道主題名的人都能讀你的通知、也能發訊息給你。
+> 所以一定要用隨機字串，不要取 `flights` 這種。想更安全就自架 ntfy 並設 `NTFY_SERVER`。
+
+| Secret | 說明 |
+|---|---|
+| `NTFY_TOPIC` | 必填，你的隨機主題名 |
+| `NTFY_SERVER` | 選填，自架伺服器網址，預設 `https://ntfy.sh` |
+
+### LINE（約 30 分鐘，通知進你真的會看的 App）
+
+LINE Notify 已於 2025-03-31 終止服務，所以要改走 Messaging API：
+
+1. 到 [LINE Developers Console](https://developers.line.biz/console/) 用 LINE 帳號登入。
+2. 建一個 **Provider**（名字隨便取，例如 `personal`）。
+3. 在該 Provider 底下建一個 **Messaging API channel**。這會同時開一個 LINE 官方帳號。
+4. 進 channel 的 **Messaging API** 分頁：
+   - 往下找 **Channel access token (long-lived)**，按 **Issue** 產生 token → 存成 secret `LINE_CHANNEL_TOKEN`
+   - 用手機掃同一頁的 QR code，**把這個官方帳號加為好友**（沒加好友就推不了訊息）
+5. 拿你自己的 `userId`：在 **Basic settings** 分頁最下方的 **Your user ID**（`U` 開頭的一串）→ 存成 secret `LINE_USER_ID`
+
+| Secret | 說明 |
+|---|---|
+| `LINE_CHANNEL_TOKEN` | Channel access token (long-lived) |
+| `LINE_USER_ID` | 你自己的 user ID，`U` 開頭 |
+
+推播訊息會算進官方帳號的每月免費額度。一個月幾則機票通知遠遠用不完。
+
+### 驗證通知有沒有設對
+
+不用等真的有便宜票：
+
+```bash
+NTFY_TOPIC=你的主題名 python -m tracker.cli test-notify
+```
+
+```
+偵測到管道：ntfy
+  ✓ ntfy
+```
+
+在 GitHub 上則是到 **Actions → Track flight prices → Run workflow** 手動觸發一次。
+
+---
+
+## 自動排程
+
+`.github/workflows/track.yml` 已經設好每天 01:00 UTC（台灣早上 9 點）跑一次，
+跑完把 `data/` 底下的價格紀錄 commit 回同一個分支。
+
+改時間就改 cron（注意是 **UTC**）：
+
+```yaml
+on:
+  schedule:
+    - cron: '0 1 * * *'     # 每天 09:00 台灣時間
+    # - cron: '0 1,13 * * *'  # 一天兩次，09:00 和 21:00
+```
+
+---
+
+## 指令一覽
+
+| 指令 | 用途 |
+|---|---|
+| `run` | 依 `routes.yaml` 跑完整一輪，寫歷史 + 發通知 |
+| `run --dry-run` | 只列出會查哪些組合，不連網、不寫檔、不通知 |
+| `query 出發地 目的地` | 臨時查一次，多個點用逗號分隔 |
+| `report` | 從歷史紀錄印出最低價排名 |
+| `report --group 名稱` | 某個比價群組，依目的地排名 |
+| `test-notify` | 對所有已設定的管道送測試訊息 |
+| `url 出發地 目的地 --depart ...` | 只印 Google Flights 連結，不查價 |
+
+常用參數：`--nights` `--oneway` `--adults` `--seat` `--max-stops` `--currency` `--depart-range 起:迄`
+
+---
+
+## 資料來源
+
+| 來源 | 狀態 | 說明 |
+|---|---|---|
+| **fast-flights** | 預設 | 逆向 Google Flights 的 protobuf 查詢，免金鑰、真實票價。非官方，Google 改版時可能失效 |
+| **SerpApi** | 選用 fallback | 設了 secret `SERPAPI_KEY` 就自動接上。官方支援、穩定，但按次計費，所以只有在 fast-flights 失敗後才會呼叫 |
+
+一輪裡個別查詢失敗（某天賣光、某條航線不存在）只會記錄下來繼續跑；只有**整輪都沒查到任何票價**才算失敗。
+查詢之間會隨機等 2–4 秒，避免被 Google 當成機器人。
+
+### 關於 MCP
+
+Claude 的連接器目錄裡有 Kiwi.com（`https://mcp.kiwi.com`，免金鑰）、Expedia、lastminute.com 等航班 MCP server，
+**適合你在對話裡臨時問機票**。但它們回傳的是給 LLM 讀的自然語言，在無人值守的排程環境裡沒辦法穩定解析成數字，
+所以這個追蹤器直接打資料來源，不透過 MCP。兩者可以並存。
+
+---
+
+## 資料檔
+
+| 檔案 | 內容 |
+|---|---|
+| `data/prices.csv` | 價格歷史，只增不改。每次跑每組行程存最便宜的 3 筆 |
+| `data/alerts.json` | 已通知過什麼，用來去重 |
+
+去重規則：同一組行程 24 小時內不重複通知，**除非又跌了 5% 以上**（那是新消息）。
+
+---
+
+## 開發
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+測試全部離線，用錄下來的資料結構跑，不會打網路。

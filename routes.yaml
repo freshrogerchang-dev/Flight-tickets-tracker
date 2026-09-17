@@ -1,0 +1,50 @@
+# 機票追蹤設定檔 —— 這是唯一需要你編輯的檔案。
+# 下面三條都是範例，可以整段刪掉換成自己的。機場代碼用 IATA 三碼，
+# 也可以用城市代碼（例如 TYO 同時涵蓋 NRT / HND、OSA 涵蓋 KIX / ITM）。
+
+currency: TWD
+
+# 單次執行的查詢數上限。多點 × 長日期區間很容易爆量，
+# 展開後超過這個數字會直接中止並告訴你實際數量，而不是硬跑到被 Google 擋。
+max_queries: 60
+
+# 用近幾天的價格中位數當 alert_drop_pct 的基準線。
+baseline_days: 30
+
+defaults:
+  adults: 1
+  seat: economy       # economy | premium-economy | business | first
+  max_stops: 1        # 省略代表不限轉機次數
+
+routes:
+  # ── 模式 A：單純兩地 ──────────────────────────────────────────
+  - name: 台北-東京
+    from: TPE
+    to: TYO
+    trip: round               # round | oneway | multi
+    windows:
+      - depart: 2026-12-20
+        nights: 7
+    alert_below: 12000        # 低於這個價（TWD）就通知
+    alert_drop_pct: 15        # 或低於近 30 天中位數 15% 也通知
+
+  # ── 模式 B：多個點互相比價（from / to 都可以給清單）─────────────
+  - name: 日本隨便飛
+    from: [TPE, KHH]
+    to: [NRT, KIX, FUK]
+    trip: round
+    compare: true             # 報表會把這組排名，標出哪個目的地最便宜
+    exclude:                  # 排除不想要的組合
+      - [KHH, FUK]
+    windows:
+      - depart_range: [2026-12-05, 2026-12-07]   # 區間內每天各查一次
+        nights: 4
+    alert_below: 10000
+
+  # ── 模式 C：多段行程（東京進、大阪出，一張票）──────────────────
+  - name: 東京進大阪出
+    trip: multi
+    legs:
+      - { from: TPE, to: NRT, depart: 2027-01-10 }
+      - { from: KIX, to: TPE, depart: 2027-01-17 }
+    alert_below: 15000

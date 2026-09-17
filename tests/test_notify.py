@@ -1,0 +1,184 @@
+"""Channel selection, payload shape, and fan-out isolation. No network."""
+
+from __future__ import annotations
+
+import pytest
+
+from tracker.alerts import Alert
+from tracker.notify import available_notifiers, deliver, format_alerts
+from tracker.notify.line import LineNotifier
+from tracker.notify.ntfy import NtfyNotifier, _encode_header
+
+from conftest import make_quote
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, text=""):
+        self.status_code = status_code
+        self.text = text
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    """Record outgoing HTTP calls instead of making them."""
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeResponse(kwargs.pop("_status", 200))
+
+    monkeypatch.setattr("requests.post", fake_post)
+    return calls
+
+
+# ---------------------------------------------------------------- selection
+
+
+def test_no_secrets_means_no_channels():
+    assert available_notifiers(env={}) == []
+
+
+def test_ntfy_is_selected_by_topic_alone():
+    notifiers = available_notifiers(env={"NTFY_TOPIC": "secret-topic"})
+
+    assert [n.name for n in notifiers] == ["ntfy"]
+
+
+def test_line_needs_both_token_and_user_id():
+    assert available_notifiers(env={"LINE_CHANNEL_TOKEN": "t"}) == []
+    assert available_notifiers(env={"LINE_USER_ID": "U1"}) == []
+    assert [n.name for n in available_notifiers(env={"LINE_CHANNEL_TOKEN": "t", "LINE_USER_ID": "U1"})] == ["line"]
+
+
+def test_both_channels_can_run_together():
+    notifiers = available_notifiers(
+        env={"NTFY_TOPIC": "x", "LINE_CHANNEL_TOKEN": "t", "LINE_USER_ID": "U1"}
+    )
+
+    assert [n.name for n in notifiers] == ["ntfy", "line"]
+
+
+def test_github_issue_is_only_a_fallback():
+    env = {"GITHUB_TOKEN": "gh", "GITHUB_REPOSITORY": "o/r"}
+
+    assert [n.name for n in available_notifiers(env=env)] == ["github_issue"]
+    assert [n.name for n in available_notifiers(env={**env, "NTFY_TOPIC": "x"})] == ["ntfy"]
+
+
+# ---------------------------------------------------------------- payloads
+
+
+def test_ntfy_posts_the_body_as_utf8_bytes(captured):
+    NtfyNotifier(topic="my-topic").send("標題", "台北飛東京 9,800")
+
+    assert captured[0]["url"] == "https://ntfy.sh/my-topic"
+    assert captured[0]["data"] == "台北飛東京 9,800".encode("utf-8")
+
+
+def test_ntfy_honours_a_self_hosted_server():
+    assert NtfyNotifier(topic="t", server="https://ntfy.example.com/").url == "https://ntfy.example.com/t"
+
+
+def test_ntfy_title_survives_non_latin1_text(captured):
+    """A raw Chinese title would raise UnicodeEncodeError inside requests."""
+    NtfyNotifier(topic="t").send("✈️ 便宜機票", "body")
+
+    title = captured[0]["headers"]["Title"]
+    assert title.encode("latin-1"), "header must be latin-1 safe"
+    assert title.startswith("=?utf-8?")
+
+
+def test_ascii_titles_are_left_alone():
+    assert _encode_header("Cheap flight TPE-NRT") == "Cheap flight TPE-NRT"
+
+
+def test_line_pushes_to_the_configured_user(captured):
+    LineNotifier(token="tok", user_id="U123").send("標題", "內文")
+
+    call = captured[0]
+    assert call["url"] == "https://api.line.me/v2/bot/message/push"
+    assert call["json"]["to"] == "U123"
+    assert call["json"]["messages"][0] == {"type": "text", "text": "標題\n\n內文"}
+    assert call["headers"]["Authorization"] == "Bearer tok"
+
+
+def test_line_truncates_over_long_messages(captured):
+    LineNotifier(token="t", user_id="U1").send("標題", "x" * 6000)
+
+    text = captured[0]["json"]["messages"][0]["text"]
+    assert len(text) == 5000
+    assert text.endswith("…")
+
+
+def test_line_surfaces_the_api_error_body(monkeypatch):
+    monkeypatch.setattr("requests.post", lambda *a, **k: FakeResponse(400, '{"message":"Invalid to"}'))
+
+    with pytest.raises(Exception, match="Invalid to"):
+        LineNotifier(token="t", user_id="bad").send("s", "b")
+
+
+# ---------------------------------------------------------------- fan-out
+
+
+class Boom:
+    name = "boom"
+
+    def send(self, subject, body):
+        raise RuntimeError("channel down")
+
+
+class Fine:
+    name = "fine"
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, subject, body):
+        self.sent.append((subject, body))
+
+
+def test_one_failing_channel_does_not_block_the_others():
+    good = Fine()
+
+    results = deliver([Boom(), good], "s", "b")
+
+    assert [(r.channel, r.ok) for r in results] == [("boom", False), ("fine", True)]
+    assert good.sent == [("s", "b")]
+    assert "channel down" in results[0].detail
+
+
+# ---------------------------------------------------------------- formatting
+
+
+def test_subject_names_the_cheapest_fare():
+    alerts = [
+        Alert(quote=make_quote(12000), reason="低於門檻"),
+        Alert(quote=make_quote(9800, itinerary="TPE>KIX>TPE"), reason="低於門檻"),
+    ]
+
+    subject, body = format_alerts(alerts)
+
+    assert "TPE>KIX>TPE" in subject
+    assert "9,800" in subject
+    assert "共 2 筆" in subject
+    assert body.index("9,800") < body.index("12,000"), "cheapest first"
+
+
+def test_single_alert_subject_has_no_count():
+    subject, _ = format_alerts([Alert(quote=make_quote(9800), reason="低於門檻")])
+
+    assert "共" not in subject
+
+
+def test_body_includes_the_booking_link_and_the_reason():
+    _, body = format_alerts([Alert(quote=make_quote(9800), reason="比中位數便宜 20%")])
+
+    assert "https://example.invalid/flight" in body
+    assert "比中位數便宜 20%" in body
+    assert "2026-12-20~2026-12-27" in body

@@ -1,0 +1,70 @@
+name: Track flight prices
+
+on:
+  schedule:
+    # 01:00 UTC = 09:00 台灣時間，每天一次
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只列出會查什麼，不實際查價'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # 把價格歷史 commit 回分支
+  issues: write     # 沒設 LINE / ntfy 時的保底通知管道
+
+# 前一輪還沒跑完就不要再開一輪，免得兩邊同時 commit 打架
+concurrency:
+  group: flight-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Track prices
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python -m tracker.cli run ${{ inputs.dry_run && '--dry-run' || '' }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit price history
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if [ -z "$(git status --porcelain data/)" ]; then
+            echo "沒有新的價格資料，不需要 commit"
+            exit 0
+          fi
+          git config user.name  "flight-tracker[bot]"
+          git config user.email "flight-tracker[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "chore: 更新價格紀錄 $(date -u +%Y-%m-%d)"
+          # 併發或手動推送可能讓遠端跑在前面，先 rebase 再推
+          for attempt in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "推送失敗，第 ${attempt} 次重試..."
+            sleep $((attempt * 5))
+          done
+          echo "::error::價格紀錄推送失敗"
+          exit 1

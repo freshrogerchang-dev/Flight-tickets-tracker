@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flight-tickets-tracker"
+version = "0.1.0"
+description = "Track flight prices between configurable origins and destinations, alert on cheap fares."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "requests>=2.31",
+    # v3 introduced create_query/FlightQuery, which is the API used here.
+    "fast-flights>=3.0",
+    # fast-flights 3.1.0 imports typing_extensions but does not declare it,
+    # so a clean install crashes on import without this line.
+    "typing_extensions>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+flight-tracker = "tracker.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tracker*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

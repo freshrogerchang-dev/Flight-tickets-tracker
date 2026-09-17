@@ -140,6 +140,39 @@ def test_ascii_titles_are_left_alone():
     assert _encode_header("Cheap flight TPE-NRT") == "Cheap flight TPE-NRT"
 
 
+# The real subject that silently lost a notification in production: short
+# Chinese titles fit on one line, but this one got folded across two and
+# requests refused to send a header containing a newline.
+REAL_FAILING_SUBJECT = "✈️ 便宜機票 TPE>SYD>TPE 22,158 TWD（共 3 筆）"
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        REAL_FAILING_SUBJECT,
+        "✈️ 機票追蹤器測試訊息",
+        "⚠️ 機票追蹤器查不到任何票價",
+        "✈️ 便宜機票 TPE>SYD / OOL>TPE 123,456 TWD（共 99 筆）" * 4,
+    ],
+)
+def test_encoded_titles_stay_on_one_line_and_decode_back(subject):
+    from email.header import decode_header, make_header
+
+    encoded = _encode_header(subject)
+
+    assert "\n" not in encoded and "\r" not in encoded, "a folded header is rejected by requests"
+    encoded.encode("latin-1")  # exactly what requests requires
+    assert str(make_header(decode_header(encoded))) == subject, "must survive the round trip"
+
+
+def test_a_long_chinese_title_is_actually_sent(captured):
+    """End to end through the notifier, not just the encoder."""
+    NtfyNotifier(topic="t").send(REAL_FAILING_SUBJECT, "body")
+
+    assert len(captured) == 1
+    captured[0]["headers"]["Title"].encode("latin-1")
+
+
 def test_no_tags_header_is_sent(captured):
     """ntfy turns an emoji-shortcode tag into a prefix on the title.
 

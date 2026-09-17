@@ -113,11 +113,22 @@ def poll_messages(
 
 
 def _encode_header(value: str) -> str:
-    """Encode a header value so non-latin-1 text survives the HTTP round trip."""
+    """Encode a header value so non-latin-1 text survives the HTTP round trip.
+
+    ``Header.encode`` folds anything long across multiple lines, the way an
+    email header is wrapped. An HTTP header may not contain a newline, so
+    requests rejects the folded value outright -- which is why a short Chinese
+    title went through fine and a longer one silently lost the notification.
+
+    RFC 2047 says linear whitespace between adjacent encoded-words is dropped
+    when decoding, so unfolding to single spaces keeps the value both valid and
+    decodable, and puts it back on one line.
+    """
     try:
         value.encode("latin-1")
         return value
     except UnicodeEncodeError:
         from email.header import Header
 
-        return Header(value, "utf-8").encode()
+        encoded = Header(value, "utf-8").encode()
+        return " ".join(encoded.split())

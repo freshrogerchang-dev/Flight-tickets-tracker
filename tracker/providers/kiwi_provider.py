@@ -9,12 +9,17 @@ No key needed: ``https://mcp.kiwi.com`` is authless. Because it sits after
 fast-flights in the provider list, it is only reached for searches that already
 failed, so routes that work today keep using Google's prices.
 
-By default this provider asks Kiwi to **exclude** self-transfer itineraries
-(separate tickets stitched together, where a missed connection is your own
-problem) and connections that change airports within the same city (the
-TPE>OOL result that landed at MEL but continued from AVV, an hour's drive
-away). Both can be switched back on via the constructor if the risk is
-acceptable for a particular route.
+By default this provider asks Kiwi to **exclude self-transfer** itineraries --
+separate tickets stitched together, where a missed connection is your own
+problem to solve and pay for. That risk does not shrink with the fare, so it
+stays off unless a caller explicitly accepts it.
+
+Connections that change airports within the same city (the TPE>OOL result that
+landed at MEL but continued from AVV, an hour's drive away) are **allowed** by
+default: it costs an hour and some planning, not a second ticket, and for
+routes with few single-ticket options at all -- Gold Coast among them -- ruling
+it out can mean no usable fare ever clears an alert threshold. Turn it off per
+call if that trade is not acceptable for a given route.
 
 Baggage is not assumed either way: the cheapest fares here routinely include a
 cabin bag only, so the price is not directly comparable to a fare with checked
@@ -50,7 +55,7 @@ class KiwiProvider:
         *,
         token: str | None = None,
         allow_self_transfer: bool = False,
-        allow_diff_airport_connection: bool = False,
+        allow_diff_airport_connection: bool = True,
     ):
         self.endpoint = endpoint
         self.token = token

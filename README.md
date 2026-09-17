@@ -342,10 +342,15 @@ providers: [fast_flights, kiwi]
 
 雪梨這種 fast-flights 正常的航線根本不會碰到 Kiwi；只有黃金海岸那種整批失敗的才會落到它手上。
 
-**預設會排除自行轉機和轉機換機場的行程。** Kiwi 有時會賣**自行轉機**（self-transfer，分開的兩張票，前段延誤要自己承擔）和**轉機換機場**的組合（例如第一次實跑時查到的最低價，就是降落墨爾本 MEL 後要自己跑到一小時車程外的 Avalon AVV 接下一班）。這兩種預設都關閉，只保留同一張票、同機場轉機的正常行程。要放寬的話：
+Kiwi 會賣兩種比較冒險的組合，兩者預設不同：
+
+- **自行轉機**（self-transfer）：分開的兩張票，前段延誤要自己承擔——**預設排除**，這個風險不會因為票價便宜就變小。
+- **轉機換機場**（同城市不同機場，例如降落墨爾本 MEL 後要跑到一小時車程外的 Avalon AVV 接下一班）：**預設允許**。差別只是多開一小時車，不是分開的兩張票；像黃金海岸這種單一張票選項很少的路線，排除它常常會變成永遠找不到能觸發門檻的票價。
+
+兩者都可以在建構子覆寫：
 
 ```python
-KiwiProvider(allow_self_transfer=True, allow_diff_airport_connection=True)
+KiwiProvider(allow_self_transfer=True, allow_diff_airport_connection=False)
 ```
 
 另外最便宜的票通常**只含手提行李**，跟含托運的票價不能直接比。

@@ -99,17 +99,27 @@ class PriceStore:
         return self._cache
 
     def baseline(self, quote: Quote, *, days: int, now: datetime | None = None) -> float | None:
-        """Median historical price for this exact itinerary within ``days``.
+        """Median of what this itinerary *cost* on each past run, within ``days``.
 
-        Returns ``None`` when there is not enough history to judge against --
-        two data points can be noise, and alerting off them would fire on the
-        very first run for every route.
+        Each run stores several quotes for one search -- the cheapest plus the
+        next couple -- and they all share one ``fetched_at``. Taking the median
+        across every stored row would therefore measure the spread between
+        options on a single day, not movement over time: the cheapest quote is
+        always well below the median of its own siblings, so "cheaper than the
+        30-day median" would be true on virtually every run forever.
+
+        So collapse each run to its cheapest quote first, then take the median
+        of those. A drop then means today is cheap against what this itinerary
+        actually sold for on previous days.
+
+        Returns ``None`` below three runs of history: two points are noise, and
+        judging against them would alert on every route from day one.
         """
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(days=days)
         key = quote_key(quote)
 
-        prices = []
+        cheapest_per_run: dict[str, int] = {}
         for row in self.rows():
             if _row_key(row) != key:
                 continue
@@ -120,12 +130,17 @@ class PriceStore:
                 continue
             if fetched.tzinfo is None:
                 fetched = fetched.replace(tzinfo=timezone.utc)
-            if fetched >= cutoff:
-                prices.append(price)
+            if fetched < cutoff:
+                continue
+            # One search writes all its quotes with the same timestamp, which
+            # is what makes it usable as a run identifier.
+            stamp = row["fetched_at"]
+            if stamp not in cheapest_per_run or price < cheapest_per_run[stamp]:
+                cheapest_per_run[stamp] = price
 
-        if len(prices) < 3:
+        if len(cheapest_per_run) < 3:
             return None
-        return statistics.median(prices)
+        return statistics.median(cheapest_per_run.values())
 
     def cheapest_per_key(self, *, group: str | None = None, since: date | None = None) -> list[dict]:
         """Latest-run cheapest row per itinerary, for the report command."""

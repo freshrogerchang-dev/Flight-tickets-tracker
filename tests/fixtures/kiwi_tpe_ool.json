@@ -1,0 +1,115 @@
+{
+  "query": "TPE → OOL on 12/12/2026–26/12/2026, 1 adult, 12–12 nights",
+  "currency": "TWD",
+  "passengers": {"adults": 1, "children": 0, "infants": 0},
+  "resultsCount": 4,
+  "searchTimeMs": 2466,
+  "error": null,
+  "itineraries": [
+    {
+      "id": "cheapest-but-changes-airport",
+      "price": 23645,
+      "priceFormatted": "23645 TWD",
+      "totalDurationSeconds": 164700,
+      "bookingUrl": "https://kiwi.com/u/bjyx3m",
+      "baggage": {"personalItem": 0, "cabinBag": 1, "checkedBag": 0},
+      "outbound": {
+        "from": "TPE", "to": "OOL",
+        "departureTime": "2026-12-24T17:35:00",
+        "arrivalTime": "2026-12-25T18:05:00",
+        "durationSeconds": 81000,
+        "stops": 2,
+        "route": ["TPE", "SZX", "MEL", "OOL"],
+        "cabinClass": "Economy",
+        "segments": [
+          {"from": "TPE", "to": "SZX", "carrier": "ZH", "carrierName": "Shenzhen Airlines", "flightNumber": "ZH9074"},
+          {"from": "SZX", "to": "MEL", "carrier": "ZH", "carrierName": "Shenzhen Airlines", "flightNumber": "ZH811"},
+          {"from": "AVV", "to": "OOL", "carrier": "JQ", "carrierName": "Jetstar Airways", "flightNumber": "JQ630"}
+        ]
+      },
+      "inbound": {
+        "from": "OOL", "to": "TPE",
+        "departureTime": "2027-01-06T17:10:00",
+        "durationSeconds": 83700,
+        "stops": 2,
+        "route": ["OOL", "MEL", "KUL", "TPE"],
+        "segments": [
+          {"from": "OOL", "to": "MEL", "carrier": "JQ", "carrierName": "Jetstar Airways"},
+          {"from": "MEL", "to": "KUL", "carrier": "D7", "carrierName": "AirAsia X"},
+          {"from": "KUL", "to": "TPE", "carrier": "D7", "carrierName": "AirAsia X"}
+        ]
+      }
+    },
+    {
+      "id": "same-airport-throughout",
+      "price": 24135,
+      "priceFormatted": "24135 TWD",
+      "totalDurationSeconds": 169800,
+      "bookingUrl": "https://kiwi.com/u/pd3u86",
+      "baggage": {"personalItem": 0, "cabinBag": 1, "checkedBag": 0},
+      "outbound": {
+        "from": "TPE", "to": "OOL",
+        "departureTime": "2026-12-24T17:35:00",
+        "arrivalTime": "2026-12-25T19:30:00",
+        "durationSeconds": 86100,
+        "stops": 2,
+        "route": ["TPE", "SZX", "MEL", "OOL"],
+        "cabinClass": "Economy",
+        "segments": [
+          {"from": "TPE", "to": "SZX", "carrier": "ZH", "carrierName": "Shenzhen Airlines"},
+          {"from": "SZX", "to": "MEL", "carrier": "ZH", "carrierName": "Shenzhen Airlines"},
+          {"from": "MEL", "to": "OOL", "carrier": "VA", "carrierName": "Virgin Australia Airlines"}
+        ]
+      },
+      "inbound": {
+        "from": "OOL", "to": "TPE",
+        "departureTime": "2027-01-06T17:10:00",
+        "durationSeconds": 83700,
+        "stops": 2,
+        "route": ["OOL", "MEL", "KUL", "TPE"],
+        "segments": [{"from": "OOL", "to": "MEL", "carrier": "JQ", "carrierName": "Jetstar Airways"}]
+      }
+    },
+    {
+      "id": "one-stop-via-bali",
+      "price": 26730,
+      "priceFormatted": "26730 TWD",
+      "totalDurationSeconds": 166500,
+      "bookingUrl": "https://kiwi.com/u/csmgwmm",
+      "baggage": {"personalItem": 1, "cabinBag": 0, "checkedBag": 0},
+      "outbound": {
+        "from": "TPE", "to": "OOL",
+        "departureTime": "2026-12-25T10:10:00",
+        "arrivalTime": "2026-12-26T07:10:00",
+        "durationSeconds": 68400,
+        "stops": 1,
+        "route": ["TPE", "DPS", "OOL"],
+        "cabinClass": "Economy",
+        "segments": [
+          {"from": "TPE", "to": "DPS", "carrier": "JX", "carrierName": "Starlux Airlines"},
+          {"from": "DPS", "to": "OOL", "carrier": "VA", "carrierName": "Virgin Australia Airlines"}
+        ]
+      },
+      "inbound": {
+        "from": "OOL", "to": "TPE",
+        "departureTime": "2027-01-07T13:10:00",
+        "durationSeconds": 98100,
+        "stops": 2,
+        "route": ["OOL", "AVV", "KUL", "TPE"],
+        "segments": [{"from": "OOL", "to": "AVV", "carrier": "JQ", "carrierName": "Jetstar Airways"}]
+      }
+    },
+    {
+      "id": "priced-but-no-price-field",
+      "price": null,
+      "bookingUrl": "https://kiwi.com/u/nope",
+      "outbound": {
+        "from": "TPE", "to": "OOL",
+        "departureTime": "2026-12-24T17:35:00",
+        "durationSeconds": 81000,
+        "stops": 2,
+        "segments": []
+      }
+    }
+  ]
+}

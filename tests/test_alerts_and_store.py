@@ -52,6 +52,53 @@ def test_baseline_is_the_median_of_the_same_itinerary(store, now):
     assert store.baseline(make_quote(9000), days=30, now=now) == 13000
 
 
+def test_baseline_is_not_polluted_by_the_other_quotes_from_the_same_run(store, now):
+    """The exact false alert seen in production.
+
+    A single run stored 26793 / 32536 / 34423 for one itinerary. Taking the
+    median of all three made the cheapest look 18% below "the 30-day median",
+    when in fact nothing had moved -- that is just the spread between options
+    on one day. Only one run of history exists here, so there is no baseline.
+    """
+    one_run = now - timedelta(days=1)
+    store.append([make_quote(p, fetched_at=one_run) for p in (26793, 32536, 34423)])
+
+    assert store.baseline(make_quote(26793), days=30, now=now) is None
+
+
+def test_baseline_uses_the_cheapest_of_each_run(store, now):
+    """Three runs, each with a spread. Only the cheapest of each should count."""
+    for day, prices in enumerate([(30000, 36000, 40000), (28000, 35000, 39000), (32000, 37000, 41000)], start=1):
+        stamp = now - timedelta(days=day)
+        store.append([make_quote(p, fetched_at=stamp) for p in prices])
+
+    # median(30000, 28000, 32000) -- not median of all nine rows (36000).
+    assert store.baseline(make_quote(20000), days=30, now=now) == 30000
+
+
+def test_a_stable_price_does_not_look_like_a_drop(store, now):
+    """Same fare every day: no alert, however wide the daily spread is."""
+    for day in range(1, 8):
+        stamp = now - timedelta(days=day)
+        store.append([make_quote(p, fetched_at=stamp) for p in (26793, 32536, 34423)])
+    route = make_route(alert_drop_pct=12)
+
+    assert evaluate(make_quote(26793), route, store, now=now) is None
+
+
+def test_a_real_drop_still_alerts(store, now):
+    """Guard against over-correcting: a genuine fall must still fire."""
+    for day in range(1, 8):
+        stamp = now - timedelta(days=day)
+        store.append([make_quote(p, fetched_at=stamp) for p in (30000, 35000, 38000)])
+    route = make_route(alert_drop_pct=12)
+
+    alert = evaluate(make_quote(25000), route, store, now=now)
+
+    assert alert is not None
+    assert alert.baseline == 30000
+
+
 def test_baseline_ignores_rows_outside_the_window(store, now):
     recent = [make_quote(10000, fetched_at=now - timedelta(days=d)) for d in (1, 2, 3)]
     ancient = [make_quote(50000, fetched_at=now - timedelta(days=d)) for d in (100, 200, 300)]

@@ -36,4 +36,8 @@ def get_provider(name: str) -> Provider:
         from .serpapi_provider import SerpApiProvider
 
         return SerpApiProvider()
-    raise ProviderError(f"未知的 provider: {name!r}（可用：fast_flights, serpapi）")
+    if key == "kiwi":
+        from .kiwi_provider import KiwiProvider
+
+        return KiwiProvider()
+    raise ProviderError(f"未知的 provider: {name!r}（可用：fast_flights, kiwi, serpapi）")

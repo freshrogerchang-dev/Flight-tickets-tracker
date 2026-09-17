@@ -7,6 +7,11 @@
 
 currency: TWD
 
+# 依序嘗試，第一個查到票價的就採用。
+# fast-flights（Google Flights）對 OOL 這類航線會整批失敗，Kiwi 查得到，
+# 所以擺在後面當備援——雪梨這種正常的航線根本不會呼叫到它。
+providers: [fast_flights, kiwi]
+
 # 單次執行的查詢數上限。目的地數 × 日期天數很容易爆量，
 # 展開後超過這個數字會直接中止並告訴你實際數量，而不是硬跑到被 Google 擋。
 max_queries: 60

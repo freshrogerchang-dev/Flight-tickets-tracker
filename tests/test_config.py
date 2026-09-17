@@ -172,10 +172,18 @@ routes:
     )
 
 
-def test_shipped_example_config_is_valid():
-    """The committed routes.yaml must always load -- it is the onboarding path."""
+def test_shipped_config_is_valid_and_expands():
+    """The committed routes.yaml must load and stay inside its own query budget.
+
+    Deliberately asserts on properties rather than specific routes: this file is
+    meant to be edited, and a test that pins the destinations would fail every
+    time someone changes where they want to fly.
+    """
+    from tracker.expand import expand_all
+
     config = load_config(Path(__file__).parent.parent / "routes.yaml")
 
-    assert len(config.routes) == 3
-    assert any(r.compare for r in config.routes)
-    assert any(r.trip == "multi" for r in config.routes)
+    assert config.routes, "routes.yaml ships with at least one route"
+    specs = expand_all(config)  # raises TooManyQueries if it is over budget
+    assert specs
+    assert all(spec.legs for spec in specs)

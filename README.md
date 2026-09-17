@@ -1,7 +1,7 @@
 # ✈️ 機票價格追蹤器
 
 每天自動查你指定的航線票價，存成歷史紀錄，發現便宜票就推到你手機上。
-出發地和目的地都可以填**多個點**，也支援**多段行程**（東京進、大阪出）。
+出發地和目的地都可以填**多個點**，也支援**多段行程**（雪梨進、黃金海岸出）。
 
 通知走 **LINE** 和 **ntfy.sh**。
 
@@ -25,71 +25,87 @@ GitHub Actions 跑 tracker
 pip install -e .
 
 # 臨時查一次（不用設定檔）
-python -m tracker.cli query TPE NRT --depart 2026-12-20 --nights 7
+python -m tracker.cli query TPE SYD --depart 2026-12-20 --nights 12
 
 # 一個出發地比多個目的地，找最便宜的那個
-python -m tracker.cli query TPE NRT,KIX,FUK --depart 2026-12-20 --nights 5
+python -m tracker.cli query TPE SYD,OOL,BNE --depart 2026-12-20 --nights 12
 
 # 先看看會查哪些組合，不連網
 python -m tracker.cli run --dry-run
 ```
 
+目前 `routes.yaml` 追的是 **台北 → 雪梨(SYD) / 黃金海岸(OOL)**，
+日期是預填的，請改成你真正要飛的區間。
+
 ---
 
 ## 設定航線：`routes.yaml`
 
-這是唯一需要你編輯的檔案。內附的三條是範例，可以整段刪掉換成自己的。
+這是唯一需要你編輯的檔案。目前設好的是台北→澳洲東岸，換航線就直接改它。
+檔案末尾有其他寫法的備忘（多出發地、單程、排除組合）。
 
-機場代碼用 IATA 三碼。也可以用**城市代碼**一次涵蓋多個機場：`TYO` = NRT + HND、`OSA` = KIX + ITM、`NYC` = JFK + LGA + EWR。
+機場代碼用 IATA 三碼。也可以用**城市代碼**一次涵蓋多個機場：`TYO` = NRT + HND、`NYC` = JFK + LGA + EWR。
+澳洲這幾個各自是獨立機場，沒有共用城市代碼：`SYD` 雪梨、`OOL` 黃金海岸、`BNE` 布里斯本、`MEL` 墨爾本。
 
 ### 模式 A：單純兩地
 
 ```yaml
 routes:
-  - name: 台北-東京
+  - name: 台北-雪梨
     from: TPE
-    to: TYO
+    to: SYD
     trip: round               # round | oneway | multi
     windows:
       - depart: 2026-12-20
-        nights: 7
-    alert_below: 12000        # 低於這個價（TWD）就通知
-    alert_drop_pct: 15        # 或比近 30 天中位數便宜 15% 也通知
+        nights: 12
+    alert_below: 26000        # 低於這個價（TWD）就通知
+    alert_drop_pct: 12        # 或比近 30 天中位數便宜 12% 也通知
 ```
 
 兩個門檻是**獨立**的，設一個或兩個都可以，任一成立就通知。
 `alert_drop_pct` 需要累積至少 3 筆同行程的歷史才會生效——第一次跑不會因為沒有基準線就亂叫。
 
+> 不確定門檻該填多少就先隨便抓一個，跑一兩週後 `alert_drop_pct` 會自己抓到行情，
+> 再回頭用 `report` 看實際價格帶去修 `alert_below`。
+
 ### 模式 B：多個點互相比價
 
-`from` 和 `to` 都吃清單，會做笛卡兒展開：
+`from` 和 `to` 都吃清單，會做笛卡兒展開。這就是目前設定檔在做的事：
 
 ```yaml
-  - name: 日本隨便飛
-    from: [TPE, KHH]          # 2 個出發地
-    to: [NRT, KIX, FUK]       # × 3 個目的地 = 6 條航線
+  - name: 台北-澳洲東岸
+    from: TPE
+    to: [SYD, OOL]            # 2 個目的地 = 2 條航線
     trip: round
     compare: true             # 報表會把這組依目的地排名
-    exclude:
-      - [KHH, FUK]            # 排除不想要的組合
     windows:
-      - depart_range: [2026-12-01, 2026-12-31]   # 區間內每天各查一次
-        nights: 4
-    alert_below: 10000
+      - depart_range: [2026-12-12, 2026-12-26]   # 區間內每天各查一次
+        nights: 12
+    alert_below: 26000
 ```
 
 設了 `compare: true` 之後：
 
 ```bash
-python -m tracker.cli report --group 日本隨便飛
+python -m tracker.cli report --group 台北-澳洲東岸
 ```
 
+輸出長這樣（數字為格式示意，不是實際查到的票價）：
+
 ```
-近 30 天最低價（群組：日本隨便飛，每個目的地取最低）
+近 30 天最低價（群組：台北-澳洲東岸，每個目的地取最低）
 ────────────────────────────────────────────────────────────
- 1. TPE>KIX>TPE     8,898 TWD  2026-12-06~2026-12-10  EVA Air/Peach
- 2. KHH>KIX>KHH     9,906 TWD  2026-12-06~2026-12-10  EVA Air/Peach
- 3. KHH>NRT>KHH    10,123 TWD  2026-12-06~2026-12-10  EVA Air/Peach
+ 1. TPE>OOL>TPE    23,480 TWD  2026-12-15~2026-12-27  Scoot/Jetstar
+ 2. TPE>SYD>TPE    27,900 TWD  2026-12-18~2026-12-30  China Airlines
+```
+
+多出發地、排除組合的寫法：
+
+```yaml
+    from: [TPE, KHH]          # 2 個出發地 × 2 個目的地 = 4 條航線
+    to: [SYD, OOL]
+    exclude:
+      - [KHH, OOL]            # 排除不想要的組合
 ```
 
 > ⚠️ **會爆量**：`2 個出發地 × 3 個目的地 × 31 天 = 186 次查詢`。
@@ -98,13 +114,15 @@ python -m tracker.cli report --group 日本隨便飛
 
 ### 模式 C：多段行程
 
+進出不同城市，一張票：
+
 ```yaml
-  - name: 東京進大阪出
+  - name: 雪梨進黃金海岸出
     trip: multi
     legs:
-      - { from: TPE, to: NRT, depart: 2027-01-10 }
-      - { from: KIX, to: TPE, depart: 2027-01-17 }
-    alert_below: 15000
+      - { from: TPE, to: SYD, depart: 2026-12-12 }
+      - { from: OOL, to: TPE, depart: 2026-12-24 }
+    alert_below: 30000
 ```
 
 ---

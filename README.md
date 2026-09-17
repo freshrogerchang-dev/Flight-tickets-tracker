@@ -174,7 +174,10 @@ LINE Notify 已於 2025-03-31 終止服務，所以要改走 Messaging API：
 
 ### 驗證通知有沒有設對
 
-不用等真的有便宜票：
+不用等真的有便宜票，也不用開終端機：到 **Actions → Test notifications → Run workflow**。
+跑完在 Summary 會看到每個管道的成敗，以及指令頻道的兩個 secret 有沒有設好（只報「已設定 / 未設定」，不會印出值）。
+
+本機的話：
 
 ```bash
 NTFY_TOPIC=你的主題名 python -m tracker.cli test-notify
@@ -184,8 +187,6 @@ NTFY_TOPIC=你的主題名 python -m tracker.cli test-notify
 偵測到管道：ntfy
   ✓ ntfy
 ```
-
-在 GitHub 上則是到 **Actions → Track flight prices → Run workflow** 手動觸發一次。
 
 ---
 

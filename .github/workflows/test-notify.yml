@@ -1,0 +1,52 @@
+name: Test notifications
+
+# 設好 secrets 之後用這個確認通知真的送得出去，不必等到有便宜票，
+# 也不必開終端機 —— 在 Actions 頁面按 Run workflow 就好。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Send a test message to every configured channel
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python -m tracker.cli test-notify | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Show which command-channel secrets are set
+        if: always()
+        env:
+          COMMAND_TOPIC: ${{ secrets.NTFY_COMMAND_TOPIC }}
+          COMMAND_SECRET: ${{ secrets.NTFY_COMMAND_SECRET }}
+        run: |
+          # 只回報有沒有設，永遠不印出值本身
+          {
+            echo "### 指令頻道設定"
+            if [ -n "$COMMAND_TOPIC" ]; then
+              echo "- NTFY_COMMAND_TOPIC：已設定"
+            else
+              echo "- NTFY_COMMAND_TOPIC：**未設定** —— 從手機改航線的功能不會運作"
+            fi
+            if [ -n "$COMMAND_SECRET" ]; then
+              echo "- NTFY_COMMAND_SECRET：已設定"
+            else
+              echo "- NTFY_COMMAND_SECRET：**未設定** —— 為安全起見，指令一律不會被處理"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

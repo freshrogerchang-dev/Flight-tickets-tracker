@@ -81,10 +81,21 @@ def test_a_one_way_search_sends_no_return_date(captured):
     assert "returnDate" not in captured[0]["arguments"]
 
 
-def test_self_transfer_can_be_switched_off(captured):
-    KiwiProvider(allow_self_transfer=False).search(spec())
+def test_self_transfer_and_airport_changes_are_excluded_by_default(captured):
+    """The two properties of the TPE>OOL top result that made it unsafe to book on sight."""
+    KiwiProvider().search(spec())
 
-    assert captured[0]["arguments"]["allow_self_transfer"] is False
+    arguments = captured[0]["arguments"]
+    assert arguments["allow_self_transfer"] is False
+    assert arguments["allow_diff_airport_connection"] is False
+
+
+def test_self_transfer_and_airport_changes_can_be_switched_back_on(captured):
+    KiwiProvider(allow_self_transfer=True, allow_diff_airport_connection=True).search(spec())
+
+    arguments = captured[0]["arguments"]
+    assert arguments["allow_self_transfer"] is True
+    assert arguments["allow_diff_airport_connection"] is True
 
 
 def test_infants_in_seat_and_on_lap_are_combined(captured):

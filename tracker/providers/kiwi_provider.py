@@ -9,13 +9,16 @@ No key needed: ``https://mcp.kiwi.com`` is authless. Because it sits after
 fast-flights in the provider list, it is only reached for searches that already
 failed, so routes that work today keep using Google's prices.
 
-Two things the caller should know about what comes back:
+By default this provider asks Kiwi to **exclude** self-transfer itineraries
+(separate tickets stitched together, where a missed connection is your own
+problem) and connections that change airports within the same city (the
+TPE>OOL result that landed at MEL but continued from AVV, an hour's drive
+away). Both can be switched back on via the constructor if the risk is
+acceptable for a particular route.
 
-* Kiwi sells **self-transfer** itineraries stitched from separate tickets, and
-  a connection may even change airports. ``self_transfer`` in the config turns
-  those off.
-* Baggage is not assumed. The cheapest fares here routinely include a cabin bag
-  only, so the price is not comparable to a fare with checked baggage.
+Baggage is not assumed either way: the cheapest fares here routinely include a
+cabin bag only, so the price is not directly comparable to a fare with checked
+baggage.
 """
 
 from __future__ import annotations
@@ -46,11 +49,13 @@ class KiwiProvider:
         endpoint: str = DEFAULT_ENDPOINT,
         *,
         token: str | None = None,
-        allow_self_transfer: bool = True,
+        allow_self_transfer: bool = False,
+        allow_diff_airport_connection: bool = False,
     ):
         self.endpoint = endpoint
         self.token = token
         self.allow_self_transfer = allow_self_transfer
+        self.allow_diff_airport_connection = allow_diff_airport_connection
 
     def _arguments(self, spec: SearchSpec) -> dict:
         options = spec.options
@@ -65,6 +70,7 @@ class KiwiProvider:
             "cabinClass": CABIN_CLASS.get(options.seat, "M"),
             "sort": "price",
             "allow_self_transfer": self.allow_self_transfer,
+            "allow_diff_airport_connection": self.allow_diff_airport_connection,
         }
         if spec.ret:
             arguments["returnDate"] = _as_kiwi_date(spec.ret)

@@ -331,7 +331,7 @@ on:
 | 來源 | 狀態 | 說明 |
 |---|---|---|
 | **fast-flights** | 預設 | 逆向 Google Flights 的 protobuf 查詢，免金鑰、真實票價。非官方，Google 改版時可能失效 |
-| **Kiwi.com** | 備援（已啟用） | 透過官方免金鑰的 MCP 端點 `https://mcp.kiwi.com`。涵蓋廉航與自行轉機組合，fast-flights 查不到的航線它常常查得到 |
+| **Kiwi.com** | 備援（已啟用） | 透過官方免金鑰的 MCP 端點 `https://mcp.kiwi.com`。涵蓋廉航，fast-flights 查不到的航線它常常查得到 |
 | **SerpApi** | 選用 | 設了 secret `SERPAPI_KEY` 就自動接上。官方支援、穩定，但按次計費 |
 
 `providers` 依序嘗試，**第一個查到票價的就採用**，所以後面的只有在前面失敗時才會被呼叫：
@@ -342,7 +342,13 @@ providers: [fast_flights, kiwi]
 
 雪梨這種 fast-flights 正常的航線根本不會碰到 Kiwi；只有黃金海岸那種整批失敗的才會落到它手上。
 
-**Kiwi 的票價要注意兩件事**：它會賣**自行轉機**（self-transfer）的組合，那是分開的兩張票，前段延誤要自己承擔，而且轉機有可能還要換機場；另外最便宜的票通常**只含手提行李**，跟含托運的票價不能直接比。不想要自行轉機的話，`KiwiProvider(allow_self_transfer=False)`。
+**預設會排除自行轉機和轉機換機場的行程。** Kiwi 有時會賣**自行轉機**（self-transfer，分開的兩張票，前段延誤要自己承擔）和**轉機換機場**的組合（例如第一次實跑時查到的最低價，就是降落墨爾本 MEL 後要自己跑到一小時車程外的 Avalon AVV 接下一班）。這兩種預設都關閉，只保留同一張票、同機場轉機的正常行程。要放寬的話：
+
+```python
+KiwiProvider(allow_self_transfer=True, allow_diff_airport_connection=True)
+```
+
+另外最便宜的票通常**只含手提行李**，跟含托運的票價不能直接比。
 
 一輪裡個別查詢失敗（某天賣光、某條航線不存在）只會記錄下來繼續跑；只有**整輪都沒查到任何票價**才算失敗。
 查詢之間會隨機等 2–4 秒，避免被 Google 當成機器人。

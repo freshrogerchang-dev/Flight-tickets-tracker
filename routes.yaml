@@ -21,7 +21,7 @@ baseline_days: 30
 defaults:
   adults: 1
   seat: economy
-  max_stops: 2
+  max_stops: 1
 
 # 雪梨和黃金海岸拆成兩條路線，因為兩地需要的轉機上限不同，
 # 但共用同一個 group，`report --group 台北-澳洲東岸` 仍會把它們一起排名。
@@ -35,7 +35,7 @@ routes:
     windows:
       - nights: 11                                # ← 改成你要待幾晚
         depart: 2027-06-05
-    alert_below: 26000
+    alert_below: 30000
     alert_drop_pct: 12
 
   # ── 黃金海岸：2 段時 fast-flights 全部查詢失敗，放寬到 3 段再試 ──
@@ -50,18 +50,18 @@ routes:
     windows:
       - nights: 11
         depart: 2027-06-05
-    alert_below: 26000
+    alert_below: 30000
     alert_drop_pct: 12
 
   # ── 進出不同城市：雪梨進、黃金海岸出（沿東岸玩下來很常見）──────
   # 用不到就整段刪掉。含 OOL，所以一併放寬到 3 段。
   - name: 雪梨進黃金海岸出
     trip: multi
-    max_stops: 3
+    max_stops: 2
     legs:
       - {from: TPE, to: SYD, depart: 2027-06-05}
       - {from: OOL, to: TPE, depart: 2027-06-16}
-    alert_below: 30000
+    alert_below: 50000
 
 # ── 其他寫法備忘 ──────────────────────────────────────────────
 #

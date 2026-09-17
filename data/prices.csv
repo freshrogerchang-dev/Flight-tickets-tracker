@@ -192,3 +192,6 @@ fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,curren
 2026-09-17T20:02:07+00:00,台北-黃金海岸,台北-澳洲東岸,TPE>OOL>TPE,TPE,OOL,2026-12-25,2027-01-06,99061,TWD,Qantas,2,1070,kiwi,https://kiwi.com/u/gyyszm
 2026-09-17T20:02:07+00:00,台北-黃金海岸,台北-澳洲東岸,TPE>OOL>TPE,TPE,OOL,2026-12-25,2027-01-06,133483,TWD,Qantas,1,1075,kiwi,https://kiwi.com/u/fw3rcg
 2026-09-17T20:02:23+00:00,台北-黃金海岸,台北-澳洲東岸,TPE>OOL>TPE,TPE,OOL,2026-12-26,2027-01-07,75769,TWD,Air New Zealand,1,2030,kiwi,https://kiwi.com/u/b6jh3g
+2026-09-17T23:48:02+00:00,台北-雪梨,台北-澳洲東岸,TPE>SYD>TPE,TPE,SYD,2027-06-05,2027-06-16,20596,TWD,Vietjet,1,710,fast_flights,https://www.google.com/travel/flights/search?tfs=GhwSCjIwMjctMDYtMDUoAmoFEgNUUEVyBRIDU1lEGhwSCjIwMjctMDYtMTYoAmoFEgNTWURyBRIDVFBFQgEBSAGYAQE=&hl=&curr=TWD
+2026-09-17T23:48:02+00:00,台北-雪梨,台北-澳洲東岸,TPE>SYD>TPE,TPE,SYD,2027-06-05,2027-06-16,22811,TWD,Cebu Pacific,1,685,fast_flights,https://www.google.com/travel/flights/search?tfs=GhwSCjIwMjctMDYtMDUoAmoFEgNUUEVyBRIDU1lEGhwSCjIwMjctMDYtMTYoAmoFEgNTWURyBRIDVFBFQgEBSAGYAQE=&hl=&curr=TWD
+2026-09-17T23:48:02+00:00,台北-雪梨,台北-澳洲東岸,TPE>SYD>TPE,TPE,SYD,2027-06-05,2027-06-16,27175,TWD,Cathay Pacific,1,665,fast_flights,https://www.google.com/travel/flights/search?tfs=GhwSCjIwMjctMDYtMDUoAmoFEgNUUEVyBRIDU1lEGhwSCjIwMjctMDYtMTYoAmoFEgNTWURyBRIDVFBFQgEBSAGYAQE=&hl=&curr=TWD

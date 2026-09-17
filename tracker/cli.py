@@ -102,12 +102,41 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("\n失敗的查詢：", file=sys.stderr)
         for spec, reason in result.failures:
             print(f"  {spec}: {reason}", file=sys.stderr)
-        # Partial failure is normal (a sold-out date, a flaky fetch). Only a
-        # total wipeout means the tracker itself is broken and needs attention.
+
+        # Partial failure is normal (a sold-out date, a flaky fetch). A total
+        # wipeout means the tracker itself is broken -- most likely Google
+        # changed something under fast-flights.
         if not result.quotes:
+            # Say so on the phone, not just in a workflow log nobody reads.
+            # A price tracker that quietly stops working looks exactly like a
+            # tracker that is working and finding nothing cheap.
+            _warn_tracker_is_broken(result)
             return 1
 
     return 0
+
+
+def _warn_tracker_is_broken(result) -> None:
+    """Push a failure notice to the same channels that carry the alerts."""
+    reasons = []
+    for _, reason in result.failures[:3]:
+        reasons.append(f"· {reason}")
+    if len(result.failures) > 3:
+        reasons.append(f"· ...另外還有 {len(result.failures) - 3} 筆")
+
+    subject = "⚠️ 機票追蹤器查不到任何票價"
+    body = (
+        f"{len(result.failures)} 組查詢全部失敗，這一輪沒有取得任何價格。\n"
+        "通常代表 Google Flights 改版讓 fast-flights 失效了。\n\n"
+        + "\n".join(reasons)
+    )
+
+    notifiers = available_notifiers()
+    if not notifiers:
+        return
+    for delivery in deliver(notifiers, subject, body):
+        mark = "✓" if delivery.ok else "✗"
+        print(f"  {mark} 已告知 {delivery.channel} {delivery.detail}".rstrip(), file=sys.stderr)
 
 
 def cmd_query(args: argparse.Namespace) -> int:

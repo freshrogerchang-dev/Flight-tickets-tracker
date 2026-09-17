@@ -206,6 +206,46 @@ def test_the_baseline_excludes_this_run_s_own_price(monkeypatch, pieces, now):
     assert result.alerts[0].baseline == 10000
 
 
+def test_a_total_wipeout_is_pushed_to_the_notification_channels(monkeypatch, tmp_path):
+    """A tracker that silently stops working looks just like one finding nothing cheap."""
+    from tracker import cli
+
+    sent = []
+    monkeypatch.setattr(cli, "available_notifiers", lambda: [type("N", (), {"name": "ntfy"})()])
+    monkeypatch.setattr(
+        cli,
+        "deliver",
+        lambda notifiers, subject, body: sent.append((subject, body))
+        or [type("D", (), {"channel": "ntfy", "ok": True, "detail": ""})()],
+    )
+
+    from tracker.runner import RunResult
+
+    result = RunResult()
+    result.failures = [(object(), "fast-flights 查詢失敗: KeyError: 'price'")] * 5
+
+    cli._warn_tracker_is_broken(result)
+
+    assert len(sent) == 1
+    subject, body = sent[0]
+    assert "查不到任何票價" in subject
+    assert "5 組查詢全部失敗" in body
+    assert "另外還有 2 筆" in body, "long failure lists are truncated, not dumped whole"
+
+
+def test_no_configured_channel_means_no_failure_push(monkeypatch):
+    from tracker import cli
+    from tracker.runner import RunResult
+
+    monkeypatch.setattr(cli, "available_notifiers", lambda: [])
+    monkeypatch.setattr(cli, "deliver", lambda *a: pytest.fail("must not try to deliver"))
+
+    result = RunResult()
+    result.failures = [(object(), "boom")]
+
+    cli._warn_tracker_is_broken(result)  # must not raise
+
+
 def test_report_ranks_a_comparison_group(monkeypatch, pieces, now):
     store, state = pieces
     group_route = RouteConfig(

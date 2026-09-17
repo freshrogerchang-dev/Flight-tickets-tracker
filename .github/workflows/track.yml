@@ -2,8 +2,10 @@ name: Track flight prices
 
 on:
   schedule:
-    # 01:00 UTC = 09:00 台灣時間，每天一次
-    - cron: '0 1 * * *'
+    # 01:23 UTC ≈ 09:23 台灣時間，每天一次。
+    # 刻意避開整點：GitHub 的排程是 best-effort，整點是全球負載尖峰，
+    # 那時觸發的 job 常常延遲數十分鐘，負載夠高時甚至會被直接丟掉。
+    - cron: '23 1 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

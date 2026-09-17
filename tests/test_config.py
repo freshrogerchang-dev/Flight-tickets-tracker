@@ -110,6 +110,74 @@ routes:
     assert config.routes[1].options.adults == 2, "unset fields still inherit"
 
 
+def test_compare_puts_a_route_in_a_group_named_after_itself(tmp_path):
+    config = load_config(
+        write(
+            tmp_path,
+            """
+routes:
+  - name: 日本隨便飛
+    from: TPE
+    to: [NRT, KIX]
+    compare: true
+    windows: [{depart: 2026-12-20, nights: 7}]
+""",
+        )
+    )
+
+    assert config.routes[0].group == "日本隨便飛"
+
+
+def test_routes_without_compare_are_ungrouped(tmp_path):
+    assert load_config(write(tmp_path, MINIMAL)).routes[0].group == ""
+
+
+def test_separate_routes_can_share_one_comparison_group(tmp_path):
+    """Destinations needing different settings must still rank against each other."""
+    config = load_config(
+        write(
+            tmp_path,
+            """
+routes:
+  - name: 台北-雪梨
+    group: 台北-澳洲東岸
+    from: TPE
+    to: SYD
+    max_stops: 2
+    windows: [{depart: 2026-12-20, nights: 12}]
+  - name: 台北-黃金海岸
+    group: 台北-澳洲東岸
+    from: TPE
+    to: OOL
+    max_stops: 3
+    windows: [{depart: 2026-12-20, nights: 12}]
+""",
+        )
+    )
+
+    assert [r.group for r in config.routes] == ["台北-澳洲東岸", "台北-澳洲東岸"]
+    assert [r.options.max_stops for r in config.routes] == [2, 3], "each keeps its own limit"
+
+
+def test_an_explicit_group_overrides_the_compare_default(tmp_path):
+    config = load_config(
+        write(
+            tmp_path,
+            """
+routes:
+  - name: 台北-雪梨
+    group: 澳洲
+    compare: true
+    from: TPE
+    to: SYD
+    windows: [{depart: 2026-12-20, nights: 12}]
+""",
+        )
+    )
+
+    assert config.routes[0].group == "澳洲"
+
+
 def test_serpapi_is_added_as_fallback_when_the_key_is_present(tmp_path, monkeypatch):
     monkeypatch.setenv("SERPAPI_KEY", "test-key")
     config = load_config(write(tmp_path, MINIMAL))

@@ -47,9 +47,21 @@ class RouteConfig:
     legs: tuple[tuple[str, str, date], ...] = ()
     exclude: tuple[tuple[str, str], ...] = ()
     compare: bool = False
+    #: Comparison group these quotes are ranked in. ``compare: true`` puts a
+    #: route in a group of its own; naming a ``group`` explicitly lets several
+    #: routes share one, so destinations that need different settings (a looser
+    #: max_stops, say) still get ranked against each other.
+    group: str = ""
     alert_below: int | None = None
     alert_drop_pct: float | None = None
     options: SearchOptions = field(default_factory=SearchOptions)
+
+    def __post_init__(self) -> None:
+        # Resolved here rather than in the YAML parser so a RouteConfig built
+        # directly -- in a test, or by the ad-hoc `query` command -- behaves the
+        # same as one loaded from disk.
+        if not self.group and self.compare:
+            self.group = self.name
 
 
 @dataclass
@@ -171,6 +183,15 @@ def _parse_legs(raw: Any, route_name: str) -> tuple[tuple[str, str, date], ...]:
     return tuple(legs)
 
 
+def _resolve_group(raw: dict, name: str) -> str:
+    """An explicit ``group`` lets several routes be ranked together.
+
+    Left empty, ``RouteConfig`` falls back to the route's own name when
+    ``compare: true`` is set.
+    """
+    return str(raw.get("group") or "")
+
+
 def _parse_route(raw: Any, index: int, defaults: SearchOptions, currency: str) -> RouteConfig:
     if not isinstance(raw, dict):
         raise ConfigError(f"routes[{index}]: each route must be a mapping")
@@ -195,6 +216,7 @@ def _parse_route(raw: Any, index: int, defaults: SearchOptions, currency: str) -
             trip=trip,
             legs=_parse_legs(raw.get("legs"), name),
             compare=bool(raw.get("compare", False)),
+            group=_resolve_group(raw, name),
             alert_below=int(alert_below) if alert_below else None,
             alert_drop_pct=float(alert_drop_pct) if alert_drop_pct else None,
             options=options,
@@ -233,6 +255,7 @@ def _parse_route(raw: Any, index: int, defaults: SearchOptions, currency: str) -
         windows=windows,
         exclude=tuple(exclude),
         compare=bool(raw.get("compare", False)),
+        group=_resolve_group(raw, name),
         alert_below=int(alert_below) if alert_below else None,
         alert_drop_pct=float(alert_drop_pct) if alert_drop_pct else None,
         options=options,

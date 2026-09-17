@@ -20,10 +20,52 @@ SECRET = "hunter2"
 REPO_ROOT = Path(__file__).parent.parent
 
 
+# A fixed config of the shape these tests reason about: one multi-destination
+# route carrying an inline comment and a flow list, plus a multi-city route.
+# Deliberately NOT the shipped routes.yaml -- that file exists to be edited, and
+# tests pinned to its contents break every time someone changes where they fly.
+TEST_CONFIG = """\
+currency: TWD
+max_queries: 60
+baseline_days: 30
+
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 2
+
+routes:
+  - name: 台北-澳洲東岸
+    from: TPE
+    to: [SYD, OOL]
+    trip: round
+    compare: true            # 報表會把兩個目的地排名
+    windows:
+      - depart_range: [2026-12-12, 2026-12-26]   # ← 改成你的出發區間
+        nights: 12
+    alert_below: 26000
+    alert_drop_pct: 12
+
+  - name: 雪梨進黃金海岸出
+    trip: multi
+    legs:
+      - {from: TPE, to: SYD, depart: 2026-12-12}
+      - {from: OOL, to: TPE, depart: 2026-12-24}
+    alert_below: 30000
+"""
+
+
 @pytest.fixture
 def config(tmp_path) -> Path:
-    """A copy of the shipped routes.yaml, so edits are tested against the real thing."""
     path = tmp_path / "routes.yaml"
+    path.write_text(TEST_CONFIG, encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def shipped_config(tmp_path) -> Path:
+    """A copy of the real routes.yaml, for smoke tests only."""
+    path = tmp_path / "shipped.yaml"
     shutil.copy(REPO_ROOT / "routes.yaml", path)
     return path
 
@@ -369,3 +411,25 @@ def test_a_corrupt_cursor_does_not_stop_commands_working(tmp_path):
     path.write_text("not json", encoding="utf-8")
 
     assert Cursor(path).since == "30m"
+
+
+# ---------------------------------------------------------------- shipped config
+
+
+def test_the_shipped_config_accepts_commands(shipped_config):
+    """Whatever routes are currently tracked, the command channel must still drive them.
+
+    Asserts on behaviour, not on the destinations -- routes.yaml is meant to change.
+    """
+    listing = run("hunter2 /routes", shipped_config)
+    assert listing.message and not listing.changed
+
+    before = shipped_config.read_text(encoding="utf-8")
+    assert run("hunter2 /price 24000", shipped_config).changed
+    expand_all(load_config(shipped_config))
+
+    after = shipped_config.read_text(encoding="utf-8")
+    changed = [
+        (a, b) for a, b in zip(before.splitlines(), after.splitlines(), strict=True) if a != b
+    ]
+    assert len(changed) == 1, "a command must not reformat the file it edits"

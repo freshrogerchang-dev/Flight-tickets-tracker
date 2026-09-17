@@ -246,6 +246,35 @@ def test_no_configured_channel_means_no_failure_push(monkeypatch):
     cli._warn_tracker_is_broken(result)  # must not raise
 
 
+def test_two_routes_sharing_a_group_are_ranked_together(monkeypatch, pieces, now):
+    """The point of `group:` -- SYD at 2 stops and OOL at 3 still compare directly."""
+    store, state = pieces
+    common = dict(
+        trip="round",
+        group="台北-澳洲東岸",
+        windows=(Window(departs=(date(2030, 12, 20),), nights=12),),
+    )
+    syd = RouteConfig(name="台北-雪梨", origins=("TPE",), destinations=("SYD",),
+                      options=SearchOptions(max_stops=2), **common)
+    ool = RouteConfig(name="台北-黃金海岸", origins=("TPE",), destinations=("OOL",),
+                      options=SearchOptions(max_stops=3), **common)
+
+    class PerDestination(StubProvider):
+        def search(self, spec):
+            self.prices = {"SYD": [26000], "OOL": [21000]}[spec.destination]
+            return super().search(spec)
+
+    install(monkeypatch, fast_flights=PerDestination("fast_flights"))
+    config = make_config(routes=(syd, ool))
+    specs = expand_route(syd) + expand_route(ool)
+    run_searches(specs, config, store, state, pause=False, now=now, verbose=False)
+
+    ranked = store.cheapest_per_pair(group="台北-澳洲東岸")
+
+    assert [r["destination"] for r in ranked] == ["OOL", "SYD"]
+    assert len(ranked) == 2, "both routes land in the one group"
+
+
 def test_report_ranks_a_comparison_group(monkeypatch, pieces, now):
     store, state = pieces
     group_route = RouteConfig(

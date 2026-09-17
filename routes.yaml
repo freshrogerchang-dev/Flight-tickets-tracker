@@ -17,29 +17,43 @@ baseline_days: 30
 defaults:
   adults: 1
   seat: economy
-  # 台北飛黃金海岸沒有直飛，一定要轉機；雪梨雖有直飛，但放寬到 2 段
-  # 才能抓到轉機的便宜票（例如經香港、馬尼拉、新加坡）。
   max_stops: 2
 
+# 雪梨和黃金海岸拆成兩條路線，因為兩地需要的轉機上限不同，
+# 但共用同一個 group，`report --group 台北-澳洲東岸` 仍會把它們一起排名。
 routes:
-  # ── 主力：雪梨 vs 黃金海岸，哪邊便宜就飛哪邊 ──────────────────
-  - name: 台北-澳洲東岸
+  # ── 雪梨：2 段就查得到，2026-12 實測票價帶約 22k–42k ──────────
+  - name: 台北-雪梨
+    group: 台北-澳洲東岸
     from: TPE
-    to: [SYD, OOL]
+    to: SYD
     trip: round
-    compare: true            # 報表會把兩個目的地排名
     windows:
       - depart_range: [2026-12-12, 2026-12-26]   # ← 改成你的出發區間
         nights: 12                                # ← 改成你要待幾晚
-    # 這個門檻是先抓的起始值，不是精算過的市場價。
-    # 跑一兩週累積歷史後，alert_drop_pct 會自己抓到真正的行情。
+    alert_below: 26000
+    alert_drop_pct: 12
+
+  # ── 黃金海岸：2 段時 fast-flights 全部查詢失敗，放寬到 3 段再試 ──
+  # 沒有直飛，通常要經馬尼拉 / 新加坡 / 布里斯本，路徑比雪梨長。
+  # 若 3 段仍然全掛，改追布里斯本 BNE（開車約一小時到黃金海岸）。
+  - name: 台北-黃金海岸
+    group: 台北-澳洲東岸
+    from: TPE
+    to: OOL
+    trip: round
+    max_stops: 3
+    windows:
+      - depart_range: [2026-12-12, 2026-12-26]
+        nights: 12
     alert_below: 26000
     alert_drop_pct: 12
 
   # ── 進出不同城市：雪梨進、黃金海岸出（沿東岸玩下來很常見）──────
-  # 用不到就整段刪掉。
+  # 用不到就整段刪掉。含 OOL，所以一併放寬到 3 段。
   - name: 雪梨進黃金海岸出
     trip: multi
+    max_stops: 3
     legs:
       - {from: TPE, to: SYD, depart: 2026-12-12}
       - {from: OOL, to: TPE, depart: 2026-12-24}

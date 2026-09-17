@@ -1,9 +1,8 @@
 # 機票追蹤設定檔 —— 這是唯一需要你編輯的檔案。
 #
-# 目前追：台北 → 雪梨(SYD) / 黃金海岸(OOL)
+# 目前追：台北 → 雪梨(SYD) / 黃金海岸(OOL)，2027-06-05 出發、2027-06-16 回程（11 晚）。
 #
-# ⚠️ 日期是先填的預設值（2026 年 12 月），請改成你真正要飛的區間。
-#    改完先跑 `flight-tracker run --dry-run` 確認查詢數沒爆掉。
+# 改日期或路線之後，先跑 `flight-tracker run --dry-run` 確認查詢數沒爆掉。
 
 currency: TWD
 
@@ -27,15 +26,15 @@ defaults:
 # 雪梨和黃金海岸拆成兩條路線，因為兩地需要的轉機上限不同，
 # 但共用同一個 group，`report --group 台北-澳洲東岸` 仍會把它們一起排名。
 routes:
-  # ── 雪梨：2 段就查得到，2026-12 實測票價帶約 22k–42k ──────────
+  # ── 雪梨：2 段就查得到（2026-12 實測票價帶約 22k–42k，僅供參考，6 月淡季價格會不同）──
   - name: 台北-雪梨
     group: 台北-澳洲東岸
     from: TPE
     to: SYD
     trip: round
     windows:
-      - depart_range: [2026-12-12, 2026-12-26]   # ← 改成你的出發區間
-        nights: 12                                # ← 改成你要待幾晚
+      - nights: 11                                # ← 改成你要待幾晚
+        depart: 2027-06-05
     alert_below: 26000
     alert_drop_pct: 12
 
@@ -49,8 +48,8 @@ routes:
     trip: round
     max_stops: 3
     windows:
-      - depart_range: [2026-12-12, 2026-12-26]
-        nights: 12
+      - nights: 11
+        depart: 2027-06-05
     alert_below: 26000
     alert_drop_pct: 12
 
@@ -60,8 +59,8 @@ routes:
     trip: multi
     max_stops: 3
     legs:
-      - {from: TPE, to: SYD, depart: 2026-12-12}
-      - {from: OOL, to: TPE, depart: 2026-12-24}
+      - {from: TPE, to: SYD, depart: 2027-06-05}
+      - {from: OOL, to: TPE, depart: 2027-06-16}
     alert_below: 30000
 
 # ── 其他寫法備忘 ──────────────────────────────────────────────

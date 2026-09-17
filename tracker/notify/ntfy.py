@@ -43,7 +43,10 @@ class NtfyNotifier:
             # sent RFC 2047 encoded, which the ntfy clients decode.
             "Title": _encode_header(subject),
             "Priority": "high",
-            "Tags": "airplane",
+            # No Tags header on purpose. ntfy renders a tag that matches an
+            # emoji shortcode by prepending that emoji to the title, which
+            # would double the one each subject already carries -- and worse,
+            # would stamp a cheerful ✈️ onto the ⚠️ "tracker is broken" notice.
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"

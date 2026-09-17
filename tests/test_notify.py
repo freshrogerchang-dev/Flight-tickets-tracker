@@ -140,6 +140,23 @@ def test_ascii_titles_are_left_alone():
     assert _encode_header("Cheap flight TPE-NRT") == "Cheap flight TPE-NRT"
 
 
+def test_no_tags_header_is_sent(captured):
+    """ntfy turns an emoji-shortcode tag into a prefix on the title.
+
+    With one, every alert reads '✈️ ✈️ ...' and the ⚠️ failure notice reads
+    '✈️ ⚠️ ...', which dresses a breakage up as a flight deal.
+    """
+    NtfyNotifier(topic="t").send("⚠️ 機票追蹤器查不到任何票價", "body")
+
+    assert "Tags" not in captured[0]["headers"]
+
+
+def test_priority_is_high_so_alerts_break_through(captured):
+    NtfyNotifier(topic="t").send("subject", "body")
+
+    assert captured[0]["headers"]["Priority"] == "high"
+
+
 def test_line_pushes_to_the_configured_user(captured):
     LineNotifier(token="tok", user_id="U123").send("標題", "內文")
 

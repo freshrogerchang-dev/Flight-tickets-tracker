@@ -41,8 +41,8 @@ routes:
   - name: 雪梨進黃金海岸出
     trip: multi
     legs:
-      - { from: TPE, to: SYD, depart: 2026-12-12 }
-      - { from: OOL, to: TPE, depart: 2026-12-24 }
+      - {from: TPE, to: SYD, depart: 2026-12-12}
+      - {from: OOL, to: TPE, depart: 2026-12-24}
     alert_below: 30000
 
 # ── 其他寫法備忘 ──────────────────────────────────────────────

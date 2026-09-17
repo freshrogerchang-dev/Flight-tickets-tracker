@@ -1,0 +1,80 @@
+name: Apply ntfy commands
+
+on:
+  schedule:
+    # 每 30 分鐘讀一次指令頻道。ntfy 免費版只快取 12 小時，
+    # 所以輪詢間隔必須遠小於 12 小時，指令才不會漏掉。
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 不要有兩個 job 同時改 routes.yaml
+concurrency:
+  group: flight-tracker-commands
+  cancel-in-progress: false
+
+jobs:
+  commands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Read and apply commands
+        id: apply
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_COMMAND_TOPIC: ${{ secrets.NTFY_COMMAND_TOPIC }}
+          NTFY_COMMAND_SECRET: ${{ secrets.NTFY_COMMAND_SECRET }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+        run: python -m tracker.cli commands
+
+      - name: Commit config changes
+        run: |
+          if [ -z "$(git status --porcelain routes.yaml data/)" ]; then
+            echo "沒有變更"
+            exit 0
+          fi
+          git config user.name  "flight-tracker[bot]"
+          git config user.email "flight-tracker[bot]@users.noreply.github.com"
+          git add routes.yaml data/
+          git commit -m "chore: 套用來自 ntfy 的指令"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "推送失敗，第 ${attempt} 次重試..."
+            sleep $((attempt * 5))
+          done
+          echo "::error::設定變更推送失敗"
+          exit 1
+
+      # /run 要求立刻查一輪，不等每天的排程
+      - name: Track now if asked
+        if: steps.apply.outputs.run_now == 'true'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        run: python -m tracker.cli run | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit prices from the immediate run
+        if: steps.apply.outputs.run_now == 'true'
+        run: |
+          if [ -z "$(git status --porcelain data/)" ]; then exit 0; fi
+          git config user.name  "flight-tracker[bot]"
+          git config user.email "flight-tracker[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "chore: 更新價格紀錄（手動觸發）"
+          git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}"

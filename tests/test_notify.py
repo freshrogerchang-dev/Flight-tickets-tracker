@@ -7,7 +7,7 @@ import pytest
 from tracker.alerts import Alert
 from tracker.notify import available_notifiers, deliver, format_alerts
 from tracker.notify.line import LineNotifier
-from tracker.notify.ntfy import NtfyNotifier, _encode_header
+from tracker.notify.ntfy import NtfyNotifier, _encode_header, poll_messages
 
 from conftest import make_quote
 
@@ -22,6 +22,11 @@ class FakeResponse:
             import requests
 
             raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+def FakeGet(body: str) -> FakeResponse:
+    """A successful poll response carrying `body`."""
+    return FakeResponse(200, body)
 
 
 @pytest.fixture
@@ -79,6 +84,43 @@ def test_ntfy_posts_the_body_as_utf8_bytes(captured):
 
     assert captured[0]["url"] == "https://ntfy.sh/my-topic"
     assert captured[0]["data"] == "台北飛東京 9,800".encode("utf-8")
+
+
+def test_poll_parses_newline_delimited_json(monkeypatch):
+    """ntfy answers a poll with one JSON object per line, not a JSON array."""
+    body = (
+        '{"id":"m1","event":"open","topic":"t"}\n'
+        '{"id":"m2","event":"message","topic":"t","message":"hunter2 /add BNE"}\n'
+        '{"id":"m3","event":"keepalive","topic":"t"}\n'
+        '{"id":"m4","event":"message","topic":"t","message":"hunter2 /run"}\n'
+    )
+    monkeypatch.setattr("requests.get", lambda *a, **k: FakeGet(body))
+
+    messages = poll_messages("t")
+
+    assert [m["id"] for m in messages] == ["m2", "m4"], "open/keepalive events are not messages"
+    assert messages[0]["message"] == "hunter2 /add BNE"
+
+
+def test_poll_survives_a_truncated_line(monkeypatch):
+    body = '{"id":"m1","event":"message","message":"ok"}\n{"id":"m2","event":"mess\n'
+    monkeypatch.setattr("requests.get", lambda *a, **k: FakeGet(body))
+
+    assert [m["id"] for m in poll_messages("t")] == ["m1"]
+
+
+def test_poll_passes_the_cursor_through(monkeypatch):
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen.update({"url": url, **kwargs})
+        return FakeGet("")
+
+    monkeypatch.setattr("requests.get", fake_get)
+    poll_messages("mytopic", since="m42")
+
+    assert seen["url"] == "https://ntfy.sh/mytopic/json"
+    assert seen["params"] == {"poll": "1", "since": "m42"}
 
 
 def test_ntfy_honours_a_self_hosted_server():

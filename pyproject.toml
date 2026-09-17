@@ -16,6 +16,9 @@ dependencies = [
     # fast-flights 3.1.0 imports typing_extensions but does not declare it,
     # so a clean install crashes on import without this line.
     "typing_extensions>=4.0",
+    # Round-trip YAML editing: routes.yaml is hand-written and commented, and
+    # commands must not reformat it. PyYAML cannot preserve comments.
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]

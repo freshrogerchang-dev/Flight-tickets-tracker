@@ -19,6 +19,7 @@ from .store import PriceStore
 DEFAULT_CONFIG = "routes.yaml"
 DEFAULT_PRICES = "data/prices.csv"
 DEFAULT_STATE = "data/alerts.json"
+DEFAULT_CURSOR = "data/command_cursor.json"
 
 
 def _codes(raw: str) -> tuple[str, ...]:
@@ -198,6 +199,80 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_commands(args: argparse.Namespace) -> int:
+    """Poll the ntfy command topic and apply whatever was sent."""
+    from .commands import Cursor, process
+    from .notify.ntfy import NtfyNotifier, poll_messages
+
+    topic = os.environ.get("NTFY_COMMAND_TOPIC", "")
+    secret = os.environ.get("NTFY_COMMAND_SECRET", "")
+    server = os.environ.get("NTFY_SERVER")
+
+    if not topic:
+        print("NTFY_COMMAND_TOPIC 未設定，沒有指令頻道可讀。", file=sys.stderr)
+        return 0
+    if not secret:
+        # Without a shared secret the topic name is the only barrier, and a
+        # topic name travels in every notification URL. Refuse rather than
+        # accept commands from anyone who learns it.
+        print("NTFY_COMMAND_SECRET 未設定，為安全起見不處理任何指令。", file=sys.stderr)
+        return 2
+
+    cursor = Cursor(args.cursor)
+    try:
+        messages = poll_messages(topic, server=server, since=cursor.since)
+    except Exception as exc:  # noqa: BLE001 - a poll failure is not worth failing the job
+        print(f"讀取指令頻道失敗：{exc}", file=sys.stderr)
+        return 1
+
+    handled = process(messages, config_path=args.config, secret=secret, cursor=cursor)
+    cursor.save()
+
+    if not handled:
+        print(f"沒有新指令（讀了 {len(messages)} 則訊息）", file=sys.stderr)
+        return 0
+
+    replies = []
+    run_now = report_now = False
+    for item in handled:
+        print(f"/{item.command.verb} → {item.outcome.message or '(執行)'}", file=sys.stderr)
+        if item.outcome.message:
+            replies.append(item.outcome.message)
+        run_now |= item.outcome.run_now
+        report_now |= item.outcome.report_now
+
+    if report_now:
+        store = PriceStore(args.prices)
+        rows = store.cheapest_per_pair(since=date.today() - timedelta(days=30))[:5]
+        if rows:
+            lines = [
+                f"{i}. {r['itinerary']} {int(r['price']):,} {r['currency']} {r['depart']}"
+                for i, r in enumerate(rows, start=1)
+            ]
+            replies.append("近 30 天最低價：\n" + "\n".join(lines))
+        else:
+            replies.append("還沒有價格紀錄。")
+
+    # Replies go to the alert topic, not the command topic: commands in one
+    # direction, everything the tracker says in the other.
+    reply_topic = os.environ.get("NTFY_TOPIC")
+    if replies and reply_topic:
+        try:
+            NtfyNotifier(topic=reply_topic, server=server).send("✈️ 指令結果", "\n\n".join(replies))
+        except Exception as exc:  # noqa: BLE001
+            print(f"回覆失敗（指令已套用）：{exc}", file=sys.stderr)
+
+    # Signal the workflow to run a tracking pass now instead of waiting for cron.
+    if run_now:
+        step_output = os.environ.get("GITHUB_OUTPUT")
+        if step_output:
+            with open(step_output, "a", encoding="utf-8") as handle:
+                handle.write("run_now=true\n")
+        print("已要求立刻查一輪", file=sys.stderr)
+
+    return 0
+
+
 def cmd_test_notify(args: argparse.Namespace) -> int:
     """Send a test message to every configured channel."""
     notifiers = available_notifiers()
@@ -299,6 +374,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--days", type=int, default=30)
     p_report.add_argument("--limit", type=int, default=20)
     p_report.set_defaults(func=cmd_report)
+
+    # commands
+    p_commands = sub.add_parser("commands", help="讀取 ntfy 指令頻道，套用你從手機發的指令")
+    p_commands.add_argument("--config", default=DEFAULT_CONFIG)
+    p_commands.add_argument("--cursor", default=DEFAULT_CURSOR)
+    p_commands.add_argument("--prices", default=DEFAULT_PRICES)
+    p_commands.set_defaults(func=cmd_commands)
 
     # test-notify
     p_notify = sub.add_parser("test-notify", help="對所有已設定的通知管道送一則測試訊息")

@@ -23,6 +23,8 @@ def _args(tmp_path, **overrides):
         "cursor": str(tmp_path / "cursor.json"),
         "prices": str(tmp_path / "prices.csv"),
         "state": str(tmp_path / "alerts.json"),
+        "message": None,
+        "message_id": None,
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -301,6 +303,135 @@ routes:
     assert rc == 0
     assert "已清空 1 筆已通知紀錄" in sent[0][1]
     assert json.loads(state_path.read_text(encoding="utf-8")) == {}
+
+
+# ---------------------------------------------------------------- --message (webhook relay)
+
+
+def test_message_flag_applies_without_polling(tmp_path, monkeypatch):
+    """The Cloudflare Worker relay's whole reason to exist: no getUpdates call.
+
+    Once a Telegram webhook is registered, getUpdates is rejected outright, so
+    a run driven by --message must never touch poll_updates at all.
+    """
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    monkeypatch.setenv("COMMAND_SECRET", "s3cret")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("LINE_CHANNEL_TOKEN", raising=False)
+
+    def poll_should_never_be_called(token, since=""):
+        raise AssertionError("--message must not poll Telegram")
+
+    monkeypatch.setattr("tracker.notify.telegram.poll_updates", poll_should_never_be_called)
+
+    sent = []
+    monkeypatch.setattr(
+        "tracker.notify.telegram.TelegramNotifier.send",
+        lambda self, subject, body: sent.append((subject, body)),
+    )
+
+    rc = cmd_commands(
+        _args(
+            tmp_path,
+            config=str(config_path),
+            message="s3cret /price 24000",
+            message_id="42",
+        )
+    )
+
+    assert rc == 0
+    assert "alert_below: 24000" in config_path.read_text(encoding="utf-8")
+    assert len(sent) == 1
+
+
+def test_message_flag_leaves_the_poll_cursor_untouched(tmp_path, monkeypatch):
+    """No polling happened, so there is nothing for a cursor to track."""
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    monkeypatch.setenv("COMMAND_SECRET", "s3cret")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    cmd_commands(_args(tmp_path, config=str(config_path), message="s3cret /price 24000"))
+
+    assert not (tmp_path / "cursor.json").exists()
+
+
+def test_message_flag_refuses_without_a_secret(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("COMMAND_SECRET", raising=False)
+    monkeypatch.delenv("NTFY_COMMAND_SECRET", raising=False)
+
+    rc = cmd_commands(_args(tmp_path, message="whatever /price 24000"))
+
+    assert rc == 2
+    assert "COMMAND_SECRET" in capsys.readouterr().err
+
+
+def test_message_flag_silently_ignores_a_message_without_the_secret(tmp_path, monkeypatch, capsys):
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+    monkeypatch.setenv("COMMAND_SECRET", "s3cret")
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), message="just chatting, no secret here"))
+
+    assert rc == 0
+    assert "alert_below: 24000" not in config_path.read_text(encoding="utf-8")
+    assert "沒有新指令" in capsys.readouterr().err
 
 
 def test_cmd_commands_reports_a_poll_failure_without_raising(tmp_path, monkeypatch, capsys):

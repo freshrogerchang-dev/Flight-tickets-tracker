@@ -256,35 +256,54 @@ def _command_source():
 
 
 def cmd_commands(args: argparse.Namespace) -> int:
-    """Poll the configured command channel and apply whatever was sent."""
+    """Apply one webhook-delivered message, or poll the configured command channel.
+
+    ``--message`` is how the Cloudflare Worker relay (see ``cloudflare/telegram-webhook/``)
+    drives this: Telegram webhook delivery is instant, but once a webhook is
+    registered, Telegram refuses every ``getUpdates`` call (409) -- so a run
+    triggered this way must not poll at all, just apply the one message it
+    was handed directly.
+    """
     from .commands import Cursor, describe_routes, process
 
-    channel, poll, secret = _command_source()
-    if channel is None:
-        print(
-            "沒有設定指令頻道（TELEGRAM_BOT_TOKEN，或 NTFY_COMMAND_TOPIC），沒有指令可讀。",
-            file=sys.stderr,
+    if args.message is not None:
+        secret = os.environ.get("COMMAND_SECRET") or os.environ.get("NTFY_COMMAND_SECRET", "")
+        if not secret:
+            print("COMMAND_SECRET（或 NTFY_COMMAND_SECRET）未設定，為安全起見不處理任何指令。", file=sys.stderr)
+            return 2
+        message_id = args.message_id or "webhook"
+        handled = process(
+            [{"id": message_id, "message": args.message}], config_path=args.config, secret=secret
         )
-        return 0
-    if not secret:
-        # Without a shared secret, a leaked bot token or a guessed ntfy topic
-        # name would be enough on its own. Refuse rather than accept commands
-        # from anyone who gets hold of either.
-        print("COMMAND_SECRET（或 NTFY_COMMAND_SECRET）未設定，為安全起見不處理任何指令。", file=sys.stderr)
-        return 2
+        source_label = "telegram-webhook"
+    else:
+        channel, poll, secret = _command_source()
+        if channel is None:
+            print(
+                "沒有設定指令頻道（TELEGRAM_BOT_TOKEN，或 NTFY_COMMAND_TOPIC），沒有指令可讀。",
+                file=sys.stderr,
+            )
+            return 0
+        if not secret:
+            # Without a shared secret, a leaked bot token or a guessed ntfy topic
+            # name would be enough on its own. Refuse rather than accept commands
+            # from anyone who gets hold of either.
+            print("COMMAND_SECRET（或 NTFY_COMMAND_SECRET）未設定，為安全起見不處理任何指令。", file=sys.stderr)
+            return 2
 
-    cursor = Cursor(args.cursor)
-    try:
-        messages = poll(cursor)
-    except Exception as exc:  # noqa: BLE001 - a poll failure is not worth failing the job
-        print(f"讀取指令頻道失敗（{channel}）：{exc}", file=sys.stderr)
-        return 1
+        cursor = Cursor(args.cursor)
+        try:
+            messages = poll(cursor)
+        except Exception as exc:  # noqa: BLE001 - a poll failure is not worth failing the job
+            print(f"讀取指令頻道失敗（{channel}）：{exc}", file=sys.stderr)
+            return 1
 
-    handled = process(messages, config_path=args.config, secret=secret, cursor=cursor)
-    cursor.save()
+        handled = process(messages, config_path=args.config, secret=secret, cursor=cursor)
+        cursor.save()
+        source_label = f"{channel}（讀了 {len(messages)} 則訊息）"
 
     if not handled:
-        print(f"沒有新指令（讀了 {len(messages)} 則訊息，來源：{channel}）", file=sys.stderr)
+        print(f"沒有新指令，來源：{source_label}", file=sys.stderr)
         return 0
 
     replies = []
@@ -463,6 +482,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_commands.add_argument("--cursor", default=DEFAULT_CURSOR)
     p_commands.add_argument("--prices", default=DEFAULT_PRICES)
     p_commands.add_argument("--state", default=DEFAULT_STATE)
+    p_commands.add_argument(
+        "--message",
+        default=None,
+        help="單一訊息全文，跳過輪詢直接套用（Cloudflare Worker webhook relay 用）",
+    )
+    p_commands.add_argument("--message-id", default=None, help="搭配 --message，該訊息的 id（僅供記錄）")
     p_commands.set_defaults(func=cmd_commands)
 
     # test-notify

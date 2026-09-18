@@ -1,0 +1,28 @@
+name = "flight-tracker-telegram-webhook"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+# Non-secret configuration. Change GITHUB_REF if you ever rename the branch
+# this project develops on.
+[vars]
+GITHUB_OWNER = "freshrogerchang-dev"
+GITHUB_REPO = "Flight-tickets-tracker"
+GITHUB_REF = "claude/flight-price-tracker-714pcm"
+WORKFLOW_FILE = "commands.yml"
+
+# Secrets -- never put these here. Set each with:
+#   wrangler secret put <NAME>
+#
+#   GITHUB_TOKEN             Fine-grained PAT scoped to just this repo, with
+#                            "Actions: Read and write" permission and nothing
+#                            else. This is what lets the Worker trigger the
+#                            commands workflow; keep its scope as narrow as
+#                            GitHub allows.
+#   TELEGRAM_WEBHOOK_SECRET  A random string. Must match the secret_token you
+#                            pass to Telegram's setWebhook call -- see the
+#                            README section this directory is documented
+#                            under for the exact command.
+#   COMMAND_SECRET           Same value as the COMMAND_SECRET GitHub Actions
+#                            secret. Used only to skip triggering a workflow
+#                            run for messages that plainly aren't commands;
+#                            if you rotate COMMAND_SECRET, update it here too.

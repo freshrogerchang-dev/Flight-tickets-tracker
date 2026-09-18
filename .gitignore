@@ -8,3 +8,7 @@ venv/
 .pytest_cache/
 .coverage
 .DS_Store
+
+# cloudflare/telegram-webhook/ (Node/wrangler)
+node_modules/
+.wrangler/

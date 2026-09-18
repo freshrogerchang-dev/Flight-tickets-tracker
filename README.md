@@ -363,10 +363,101 @@ xK9mQ2 /rename 台北-布里斯本 @台北-黃金海岸
 
 ### 限制
 
-- **最多延遲 30 分鐘**才生效（排程間隔）。急的話 workflow 頁面可以手動觸發。
+- **最多延遲 30 分鐘**才生效（排程間隔）。急的話 workflow 頁面可以手動觸發，或看下面的
+  Cloudflare Workers 選項把延遲壓到幾十秒內。
 - **Telegram 的 `getUpdates` 大約保留 24 小時，ntfy 免費版只快取 12 小時**。輪詢正常跑的話完全不影響；
   但如果 Actions 停掉超過這個窗口，那段時間發的指令會直接消失，不會補做。
 - 解析失敗的指令會回一則 `✗ 原因` 給你，游標照樣往前走——同一則訊息不會每 30 分鐘重試並重複噴錯。
+
+### 更快的回應：Telegram Webhook + Cloudflare Workers（進階，選用）
+
+預設的輪詢最多要等 30 分鐘才會處理你的指令。想要幾秒內就有回應，可以加一個
+**Cloudflare Worker** 當「即時轉發器」：Telegram 一有新訊息就主動推給 Worker
+（webhook，毫秒等級），Worker 立刻叫 GitHub 馬上跑 `commands.yml`，而不是等排程。
+
+```
+Telegram 傳訊息
+   ↓（webhook，毫秒等級）
+Cloudflare Worker（cloudflare/telegram-webhook/）
+   ↓ 呼叫 GitHub API 觸發 workflow_dispatch，把訊息內容當參數帶過去
+GitHub Actions 的 commands.yml 立刻開始跑（不用等 13、43 分）
+   ↓
+跟平常一樣：解析、驗證、寫入 routes.yaml、commit、回覆
+```
+
+Worker 本身**不重寫**任何 `routes.yaml` 解析或驗證邏輯——那些還是在
+`tracker/commands.py` 裡，Worker 只負責兩件事：確認訊息帶對通關碼、
+叫 GitHub 立刻跑一次。所以兩條路徑（排程輪詢／webhook 觸發）跑的是完全同一套
+Python 邏輯，不會有邏輯分岔的風險。
+
+> ⚠️ **這是模式切換，不是疊加**。Telegram 的規則是：一旦幫某個 bot 設定了
+> webhook，那個 bot 的 `getUpdates`（也就是現有排程輪詢用的方法）**就會被
+> Telegram 拒絕**，回傳 409 錯誤。所以設定好 webhook 之後，`commands.yml`
+> 裡的 `schedule:` cron 觸發會開始每次都失敗（不影響安全性，但 Actions 頁面
+> 會一直紅字）——請把那個 cron 拿掉或註解掉，只靠 webhook 觸發
+> `workflow_dispatch`。這也代表原本「排程輪詢」提供的容錯（Worker 掛掉還有
+> 下一次排程補救）沒有了，換成完全依賴 Cloudflare + 這組 GitHub token 的
+> 可用性。
+
+**設定步驟：**
+
+1. 安裝 [wrangler](https://developers.cloudflare.com/workers/wrangler/)（Cloudflare 的 CLI）並登入：
+
+   ```bash
+   cd cloudflare/telegram-webhook
+   npm install
+   npx wrangler login
+   ```
+
+2. 產一組 GitHub **fine-grained personal access token**：GitHub → Settings →
+   Developer settings → Personal access tokens → Fine-grained tokens →
+   Generate new token。只勾這個 repo、只給 **Actions: Read and write** 權限，
+   其他都不要給。
+
+3. 設定三個 Cloudflare secret（都是互動輸入，不會出現在終端機歷史裡）：
+
+   ```bash
+   npx wrangler secret put GITHUB_TOKEN            # 貼上一步產生的 token
+   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET # 自己想一組隨機字串
+   npx wrangler secret put COMMAND_SECRET          # 跟 GitHub secret 裡的 COMMAND_SECRET 一樣
+   ```
+
+4. 部署：
+
+   ```bash
+   npx wrangler deploy
+   ```
+
+   成功會印出一個網址，例如 `https://flight-tracker-telegram-webhook.<你的帳號>.workers.dev`。
+
+5. 把這個網址註冊成 Telegram 的 webhook（`<TOKEN>` 換成你的 bot token，
+   `<SECRET>` 換成上面設定的 `TELEGRAM_WEBHOOK_SECRET`，`<WORKER_URL>` 換成
+   上一步印出的網址）：
+
+   ```bash
+   curl -s "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+     -d "url=<WORKER_URL>" \
+     -d "secret_token=<SECRET>"
+   ```
+
+   回傳 `{"ok":true,...}` 就是成功了。可以用
+   `https://api.telegram.org/bot<TOKEN>/getWebhookInfo` 隨時檢查目前設定。
+
+6. **把 `commands.yml` 的 `schedule:` cron 拿掉或註解掉**（理由見上面的警告），
+   只留 `workflow_dispatch:`。
+
+**想切回輪詢模式：**
+
+```bash
+curl -s "https://api.telegram.org/bot<TOKEN>/deleteWebhook"
+```
+
+刪掉 webhook 之後，把 `commands.yml` 的 `schedule:` cron 加回來即可。
+
+**這個 Worker 沒有自動化測試**——跟 Telegram 本身一樣，這個 sandbox 連不到
+Cloudflare 或 Telegram 的網路，沒辦法在本機驗證，只能部署後照上面步驟實際測。
+`GITHUB_TOKEN` 外流的風險要自己注意：它只能觸發這個 repo 的 workflow，範圍
+已經盡量收窄，但仍然是一組活的憑證，不要 commit 進版控或貼到看得到的地方。
 
 ---
 

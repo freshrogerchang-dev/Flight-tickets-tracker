@@ -6,8 +6,22 @@ on:
     # */30）：那兩個時間點是 GitHub 排程的負載尖峰，容易延遲甚至被丟掉。
     # ntfy 免費版只快取約 12 小時，Telegram 的 getUpdates 也只留最近的
     # 訊息，所以只要輪詢遠密於那個窗口，偶爾漏跑一次也不會讓指令消失。
+    #
+    # ⚠️ 如果你設定了 cloudflare/telegram-webhook/ 那個 Worker 並註冊了
+    # Telegram webhook，這個排程會開始每次都失敗：Telegram 一旦設定 webhook，
+    # 就會拒絕所有 getUpdates 呼叫（回 409）。屆時請把這個 cron 拿掉或註解掉，
+    # 改成完全靠 webhook 觸發下面的 workflow_dispatch。
     - cron: '13,43 * * * *'
   workflow_dispatch:
+    inputs:
+      message:
+        description: 'Telegram 訊息全文（由 webhook relay 帶入；留空則照常輪詢）'
+        required: false
+        default: ''
+      message_id:
+        description: 'Telegram update_id（webhook relay 帶入，僅供記錄）'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -43,7 +57,17 @@ jobs:
           NTFY_COMMAND_TOPIC: ${{ secrets.NTFY_COMMAND_TOPIC }}
           NTFY_COMMAND_SECRET: ${{ secrets.NTFY_COMMAND_SECRET }}
           NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
-        run: python -m tracker.cli commands
+          # Passed via env, never interpolated straight into the shell script:
+          # this text comes from whoever messaged the bot, and ${{ }} spliced
+          # directly into `run:` would let it inject arbitrary shell commands.
+          WEBHOOK_MESSAGE: ${{ github.event.inputs.message }}
+          WEBHOOK_MESSAGE_ID: ${{ github.event.inputs.message_id }}
+        run: |
+          if [ -n "$WEBHOOK_MESSAGE" ]; then
+            python -m tracker.cli commands --message "$WEBHOOK_MESSAGE" --message-id "$WEBHOOK_MESSAGE_ID"
+          else
+            python -m tracker.cli commands
+          fi
 
       - name: Commit config changes
         run: |

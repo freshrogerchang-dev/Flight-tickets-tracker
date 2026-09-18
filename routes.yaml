@@ -103,3 +103,11 @@ routes:
       - depart: 2027-01-30
         nights: 5
     alert_below: 14000
+  - name: 高雄-東京
+    from: KHH
+    to: NRT
+    trip: round
+    windows:
+      - depart: 2027-01-30
+        nights: 5
+    alert_below: 16000

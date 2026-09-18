@@ -95,3 +95,11 @@ routes:
 #   /scan 2027-07-01 14    改掃描日期
 #   /rename 新名稱          幫路線改名
 # 完整指令列表見 README，或直接對指令頻道發 /help。
+  - name: 高雄-沖繩
+    from: KHH
+    to: OKA
+    trip: round
+    windows:
+      - depart: 2027-01-30
+        nights: 5
+    alert_below: 14000

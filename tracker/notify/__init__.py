@@ -39,12 +39,17 @@ class DeliveryResult:
 def available_notifiers(env: dict[str, str] | None = None) -> list[Notifier]:
     """Build the notifier list from whichever secrets are present.
 
-    LINE and ntfy are the chosen channels. GitHub Issue is the fallback so that
-    a misconfigured run still leaves a visible trace instead of dropping a cheap
-    fare on the floor.
+    Telegram, LINE and ntfy are all opt-in this way. GitHub Issue is the
+    fallback so that a misconfigured run still leaves a visible trace instead
+    of dropping a cheap fare on the floor.
     """
     env = env if env is not None else dict(os.environ)
     notifiers: list[Notifier] = []
+
+    if env.get("TELEGRAM_BOT_TOKEN") and env.get("TELEGRAM_CHAT_ID"):
+        from .telegram import TelegramNotifier
+
+        notifiers.append(TelegramNotifier(token=env["TELEGRAM_BOT_TOKEN"], chat_id=env["TELEGRAM_CHAT_ID"]))
 
     if env.get("NTFY_TOPIC"):
         from .ntfy import NtfyNotifier

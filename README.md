@@ -4,7 +4,7 @@
 出發地和目的地都可以填**多個點**，也支援**多段行程**（雪梨進、布里斯本出），
 可以限定只要直飛。
 
-通知走 **LINE** 和 **ntfy.sh**，而且可以**直接從 ntfy 發訊息改航線**，不用開 GitHub。
+通知走 **Telegram**（推薦）、**LINE**、**ntfy.sh**，而且可以**直接傳訊息給 Telegram Bot（或 ntfy）改航線**，不用開 GitHub。
 
 ```
 每天 09:00（台灣時間）
@@ -15,7 +15,7 @@ GitHub Actions 跑 tracker
    ↓
 寫進 data/prices.csv（commit 回 repo，等於免費的歷史資料庫）
    ↓
-低於門檻 or 比近期中位數便宜一截 → 推 LINE / ntfy
+低於門檻 or 比近期中位數便宜一截 → 推 Telegram / LINE / ntfy
 ```
 
 ---
@@ -154,12 +154,36 @@ python -m tracker.cli report --group 台北-澳洲東岸
 
 ## 設定通知
 
-兩個管道都是**設了才啟用**，可以只設一個、也可以兩個都設。
+三個管道都是**設了才啟用**，可以只設一個、也可以全設，通知會同時發到每一個已設定的管道。
 在 GitHub repo 的 **Settings → Secrets and variables → Actions → New repository secret** 填。
 
 都沒設的話，在 Actions 裡會退回開 GitHub Issue（手機裝 GitHub App 也會收到推播），不會把便宜票默默丟掉。
 
-### ntfy.sh（3 分鐘，推薦先設這個）
+### Telegram（3 分鐘，推薦）
+
+比 ntfy 少一個「裝額外 App、訂閱主題」的步驟——大部分人手機本來就有 Telegram。
+
+1. 在 Telegram 裡搜尋 **@BotFather**，傳 `/newbot`，照指示取個名字。完成後會給你一段
+   **bot token**（長得像 `123456789:ABCdefGhIJKlmNoPQRstuVwxyZ`）→ 存成 secret `TELEGRAM_BOT_TOKEN`。
+2. 在 Telegram 搜尋你剛剛取的 bot 名稱，點進去按 **Start**，隨便傳一則訊息給它（例如 `hi`）——
+   這一步是必要的，bot 在你主動開口之前沒辦法傳訊息給你。
+3. 用瀏覽器打開（把 `<TOKEN>` 換成你的 bot token）：
+
+   ```
+   https://api.telegram.org/bot<TOKEN>/getUpdates
+   ```
+
+   回傳的 JSON 裡找 `"chat":{"id":12345678,...}`，那個數字就是你的 chat id → 存成 secret `TELEGRAM_CHAT_ID`。
+
+| Secret | 說明 |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | 必填，@BotFather 給的 bot token |
+| `TELEGRAM_CHAT_ID` | 必填，你跟這個 bot 對話的 chat id（數字） |
+
+> 🔒 bot token 等同密碼：拿到它的人可以用你的 bot 發訊息（但看不到你們的對話紀錄）。
+> 洩漏了就回 @BotFather 用 `/revoke` 重發一組。
+
+### ntfy.sh（3 分鐘，另一個選擇）
 
 1. 產一個夠亂的主題名：
 
@@ -200,29 +224,50 @@ LINE Notify 已於 2025-03-31 終止服務，所以要改走 Messaging API：
 ### 驗證通知有沒有設對
 
 不用等真的有便宜票，也不用開終端機：到 **Actions → Test notifications → Run workflow**。
-跑完在 Summary 會看到每個管道的成敗，以及指令頻道的兩個 secret 有沒有設好（只報「已設定 / 未設定」，不會印出值）。
+跑完在 Summary 會看到每個管道的成敗，以及指令頻道的 secret 有沒有設好（只報「已設定 / 未設定」，不會印出值）。
 
 本機的話：
 
 ```bash
-NTFY_TOPIC=你的主題名 python -m tracker.cli test-notify
+TELEGRAM_BOT_TOKEN=你的token TELEGRAM_CHAT_ID=你的chatid python -m tracker.cli test-notify
 ```
 
 ```
-偵測到管道：ntfy
-  ✓ ntfy
+偵測到管道：telegram
+  ✓ telegram
 ```
 
 ---
 
-## 從手機改航線（ntfy 指令頻道）
+## 從手機改航線（指令頻道）
 
-不用開 GitHub、不用架伺服器。在 ntfy App 打一則訊息，排程的 job 每 30 分鐘讀一次並改設定檔。
+不用開 GitHub、不用架伺服器。傳一則訊息給 Telegram Bot（或 ntfy topic），
+排程的 job 每 30 分鐘讀一次並改設定檔。**兩個管道用的是同一套指令引擎，設定好其中一個就能用**；
+如果兩個都設定了，Telegram 優先。
 
-ntfy 是**雙向**的 pub/sub，所以「收通知」和「發指令」可以共用同一套東西——
-差別只在多開一個 topic 當收件匣，由 GitHub Actions 去輪詢它。
+Telegram 的 Bot API 跟 ntfy 一樣是雙向的：能推訊息給你，也能用 `getUpdates`
+讀你傳給 bot 的訊息，所以「收通知」和「發指令」一樣可以共用同一個 bot、
+不必另外架伺服器。
 
-### 設定
+### 設定（Telegram，推薦）
+
+如果你在〈設定通知〉已經設好 `TELEGRAM_BOT_TOKEN`，指令頻道就直接可以用了——
+不用另外申請 bot，同一個 bot 兩用。只需要再加一組通關碼：
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(6))"
+```
+
+| Secret | 說明 |
+|---|---|
+| `COMMAND_SECRET` | 通關碼，每則指令都要帶 |
+
+> 🔒 **為什麼指令要再加一道通關碼？**
+> bot token 外流的風險已經不小，但知道它的人也只能拿去**發通知**；
+> 能下指令就能改你的設定、把查詢量灌爆，所以要多一層。
+> 沒設 `COMMAND_SECRET` 時，程式**一則指令都不會處理**，不會退而求其次只靠 token 保密。
+
+### 設定（ntfy，另一個選擇）
 
 1. 再產一個**跟通知用的不一樣**的隨機 topic 當指令頻道：
 
@@ -230,7 +275,7 @@ ntfy 是**雙向**的 pub/sub，所以「收通知」和「發指令」可以共
    python3 -c "import secrets; print('cmd-' + secrets.token_hex(8))"
    ```
 
-2. 產一組通關碼：
+2. 產一組通關碼（跟上面 Telegram 那組共用同一個環境變數名稱 `COMMAND_SECRET` 也可以）：
 
    ```bash
    python3 -c "import secrets; print(secrets.token_urlsafe(6))"
@@ -241,16 +286,13 @@ ntfy 是**雙向**的 pub/sub，所以「收通知」和「發指令」可以共
 | Secret | 說明 |
 |---|---|
 | `NTFY_COMMAND_TOPIC` | 指令頻道的 topic 名 |
-| `NTFY_COMMAND_SECRET` | 通關碼，每則指令都要帶 |
+| `COMMAND_SECRET`（或舊名 `NTFY_COMMAND_SECRET`） | 通關碼，每則指令都要帶 |
 
-> 🔒 **為什麼指令要再加一道通關碼？**
-> topic 名稱等於密碼，而任何知道它的人都能往裡面**發**訊息。
-> 讀通知被看到頂多是隱私問題；能發指令就能改你的設定、把查詢量灌爆。
-> 所以沒設 `NTFY_COMMAND_SECRET` 時，程式**一則指令都不會處理**，而不是退而求其次只靠 topic 名。
+> 🔒 topic 名稱等於密碼，而任何知道它的人都能往裡面**發**訊息，所以同樣需要通關碼保護——理由同上。
 
 ### 用法
 
-每則訊息的格式是 `<通關碼> /指令`：
+每則訊息的格式是 `<通關碼> /指令`，傳給 Telegram Bot 或發到 ntfy topic 都一樣：
 
 ```
 xK9mQ2 /add BNE
@@ -293,7 +335,8 @@ xK9mQ2 /rename 台北-布里斯本 @台北-黃金海岸
 三則指令分別是「轉機上限清成直飛」「目的地換成 BNE」「路線改名」，
 跑完之後往後的指令就可以用新名稱 `@台北-布里斯本` 指定了。
 
-執行結果會回到**通知用的那個 topic**（不是指令頻道）：指令進、回覆出，兩個方向分開。
+執行結果會發到**每一個已設定的通知管道**（不是指令頻道）：指令進、回覆出，兩個方向分開，
+同時開 Telegram 跟 LINE 的話兩邊都會收到回覆。
 
 ### 安全網
 
@@ -306,7 +349,8 @@ xK9mQ2 /rename 台北-布里斯本 @台北-黃金海岸
 ### 限制
 
 - **最多延遲 30 分鐘**才生效（排程間隔）。急的話 workflow 頁面可以手動觸發。
-- **ntfy 免費版只快取 12 小時**。輪詢正常跑的話完全不影響；但如果 Actions 停掉超過 12 小時，那段時間發的指令會直接消失，不會補做。
+- **Telegram 的 `getUpdates` 大約保留 24 小時，ntfy 免費版只快取 12 小時**。輪詢正常跑的話完全不影響；
+  但如果 Actions 停掉超過這個窗口，那段時間發的指令會直接消失，不會補做。
 - 解析失敗的指令會回一則 `✗ 原因` 給你，游標照樣往前走——同一則訊息不會每 30 分鐘重試並重複噴錯。
 
 ---
@@ -337,7 +381,7 @@ on:
 | `report` | 從歷史紀錄印出最低價排名 |
 | `report --group 名稱` | 某個比價群組，依目的地排名 |
 | `test-notify` | 對所有已設定的管道送測試訊息 |
-| `commands` | 讀 ntfy 指令頻道並套用（排程自動跑，平常不用手動下） |
+| `commands` | 讀指令頻道（Telegram 或 ntfy）並套用（排程自動跑，平常不用手動下） |
 | `url 出發地 目的地 --depart ...` | 只印 Google Flights 連結，不查價 |
 
 常用參數：`--nights` `--oneway` `--adults` `--seat` `--max-stops` `--currency` `--depart-range 起:迄`
@@ -396,7 +440,7 @@ object is not subscriptable`），改用 Kiwi 查證後發現航班確實存在�
 本來就沒有直飛。所以目前 `routes.yaml` 追的是布里斯本(BNE) 取代黃金海岸：
 天天有 China Airlines / EVA Air 直飛，開車約一小時可到黃金海岸。想要 OOL
 也一起比、接受轉機的話，`routes.yaml` 檔尾有寫法備忘，或用 `/stops` `/to`
-從 ntfy 加回來。
+從指令頻道加回來。
 
 **只要直飛（`max_stops: 0`）會讓某些航線更常查無資料**，這是取捨後的結果，
 不是 bug：轉機選項通常比直飛多，關掉轉機等於縮小候選池。多段行程那條
@@ -418,7 +462,7 @@ GitHub 的排程是 **best-effort**，不保證準時，這是它的已知限制
 - **會延遲**，尤其整點前後（全球負載尖峰），偶爾延遲數十分鐘到數小時。
   所以兩個 workflow 都刻意避開整點（`23 1 * * *`、`13,43 * * * *`）。
 - **負載夠高時會直接丟掉某幾次執行**。每天查價漏一次無所謂；
-  指令頻道則是靠「輪詢頻率遠密於 ntfy 的 12 小時快取」來吸收，漏跑一兩次不會讓指令消失。
+  指令頻道則是靠「輪詢頻率遠密於 Telegram／ntfy 的訊息保留窗口」來吸收，漏跑一兩次不會讓指令消失。
 - **公開 repo 連續 60 天沒有新 commit，排程會被自動停用**。
   這個追蹤器每天都會 commit 價格紀錄，所以正常情況不會觸發。
   但要注意這是連鎖的：如果追蹤器壞掉不再 commit，60 天後排程也會被關掉——

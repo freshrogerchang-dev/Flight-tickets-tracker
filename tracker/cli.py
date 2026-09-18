@@ -228,37 +228,63 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_source():
+    """Pick which channel to poll for inbound commands.
+
+    Telegram wins when both are configured, since it is the channel this
+    project now recommends. Either way the same shared secret gates every
+    command -- Telegram's bot token is already private, but a message still
+    has to open with the secret before ``commands.parse`` accepts it, so a
+    leaked token alone is not enough to drive the tracker.
+    """
+    secret = os.environ.get("COMMAND_SECRET") or os.environ.get("NTFY_COMMAND_SECRET", "")
+
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if telegram_token:
+        from .notify.telegram import poll_updates
+
+        return "telegram", (lambda cursor: poll_updates(telegram_token, since=cursor.last_id)), secret
+
+    ntfy_topic = os.environ.get("NTFY_COMMAND_TOPIC", "")
+    if ntfy_topic:
+        from .notify.ntfy import poll_messages
+
+        server = os.environ.get("NTFY_SERVER")
+        return "ntfy", (lambda cursor: poll_messages(ntfy_topic, server=server, since=cursor.since)), secret
+
+    return None, None, secret
+
+
 def cmd_commands(args: argparse.Namespace) -> int:
-    """Poll the ntfy command topic and apply whatever was sent."""
+    """Poll the configured command channel and apply whatever was sent."""
     from .commands import Cursor, process
-    from .notify.ntfy import NtfyNotifier, poll_messages
 
-    topic = os.environ.get("NTFY_COMMAND_TOPIC", "")
-    secret = os.environ.get("NTFY_COMMAND_SECRET", "")
-    server = os.environ.get("NTFY_SERVER")
-
-    if not topic:
-        print("NTFY_COMMAND_TOPIC 未設定，沒有指令頻道可讀。", file=sys.stderr)
+    channel, poll, secret = _command_source()
+    if channel is None:
+        print(
+            "沒有設定指令頻道（TELEGRAM_BOT_TOKEN，或 NTFY_COMMAND_TOPIC），沒有指令可讀。",
+            file=sys.stderr,
+        )
         return 0
     if not secret:
-        # Without a shared secret the topic name is the only barrier, and a
-        # topic name travels in every notification URL. Refuse rather than
-        # accept commands from anyone who learns it.
-        print("NTFY_COMMAND_SECRET 未設定，為安全起見不處理任何指令。", file=sys.stderr)
+        # Without a shared secret, a leaked bot token or a guessed ntfy topic
+        # name would be enough on its own. Refuse rather than accept commands
+        # from anyone who gets hold of either.
+        print("COMMAND_SECRET（或 NTFY_COMMAND_SECRET）未設定，為安全起見不處理任何指令。", file=sys.stderr)
         return 2
 
     cursor = Cursor(args.cursor)
     try:
-        messages = poll_messages(topic, server=server, since=cursor.since)
+        messages = poll(cursor)
     except Exception as exc:  # noqa: BLE001 - a poll failure is not worth failing the job
-        print(f"讀取指令頻道失敗：{exc}", file=sys.stderr)
+        print(f"讀取指令頻道失敗（{channel}）：{exc}", file=sys.stderr)
         return 1
 
     handled = process(messages, config_path=args.config, secret=secret, cursor=cursor)
     cursor.save()
 
     if not handled:
-        print(f"沒有新指令（讀了 {len(messages)} 則訊息）", file=sys.stderr)
+        print(f"沒有新指令（讀了 {len(messages)} 則訊息，來源：{channel}）", file=sys.stderr)
         return 0
 
     replies = []
@@ -282,14 +308,13 @@ def cmd_commands(args: argparse.Namespace) -> int:
         else:
             replies.append("還沒有價格紀錄。")
 
-    # Replies go to the alert topic, not the command topic: commands in one
-    # direction, everything the tracker says in the other.
-    reply_topic = os.environ.get("NTFY_TOPIC")
-    if replies and reply_topic:
-        try:
-            NtfyNotifier(topic=reply_topic, server=server).send("✈️ 指令結果", "\n\n".join(replies))
-        except Exception as exc:  # noqa: BLE001
-            print(f"回覆失敗（指令已套用）：{exc}", file=sys.stderr)
+    # Sent through every configured notify channel, not just the one the
+    # command arrived on -- someone running LINE + Telegram together should
+    # see the result either way, the same as a price alert would reach both.
+    if replies:
+        for delivery in deliver(available_notifiers(), "✈️ 指令結果", "\n\n".join(replies)):
+            if not delivery.ok:
+                print(f"回覆失敗（指令已套用）：{delivery.channel} {delivery.detail}", file=sys.stderr)
 
     # Signal the workflow to run a tracking pass now instead of waiting for cron.
     if run_now:
@@ -307,8 +332,8 @@ def cmd_test_notify(args: argparse.Namespace) -> int:
     notifiers = available_notifiers()
     if not notifiers:
         print(
-            "沒有偵測到任何通知管道。請設定 NTFY_TOPIC，或 LINE_CHANNEL_TOKEN + LINE_USER_ID"
-            "（在 Actions 內沒設時會退回 GitHub Issue）。",
+            "沒有偵測到任何通知管道。請設定 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID、NTFY_TOPIC，"
+            "或 LINE_CHANNEL_TOKEN + LINE_USER_ID（在 Actions 內沒設時會退回 GitHub Issue）。",
             file=sys.stderr,
         )
         return 1

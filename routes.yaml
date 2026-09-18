@@ -4,7 +4,7 @@
 # 全部只要直飛（max_stops: 0），不轉機。
 #
 # 改日期或路線之後，先跑 `flight-tracker run --dry-run` 確認查詢數沒爆掉。
-# 也可以從 ntfy 指令頻道下 /scan /to /stops 等指令改，見 README〈從手機改航線〉。
+# 也可以從指令頻道（Telegram 或 ntfy）下 /scan /to /stops 等指令改，見 README〈從手機改航線〉。
 
 currency: TWD
 
@@ -89,7 +89,7 @@ routes:
 # 拿掉 max_stops: 0（或另外設一個較大的數字），並把 to 改成：
 #   to: [SYD, BNE, OOL]
 #
-# 也可以直接從 ntfy 指令頻道操作，不用手動改這個檔案：
+# 也可以直接從指令頻道（Telegram 或 ntfy）操作，不用手動改這個檔案：
 #   /to SYD BNE OOL        整個換掉目的地
 #   /stops 2               放寬轉機上限
 #   /scan 2027-07-01 14    改掃描日期

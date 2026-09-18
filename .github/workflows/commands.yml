@@ -1,11 +1,11 @@
-name: Apply ntfy commands
+name: Apply commands
 
 on:
   schedule:
     # 每半小時讀一次指令頻道，但錯開整點與半點（用 13 分、43 分而非
     # */30）：那兩個時間點是 GitHub 排程的負載尖峰，容易延遲甚至被丟掉。
-    # ntfy 免費版只快取約 12 小時，所以只要輪詢遠密於 12 小時，
-    # 偶爾漏跑一次也不會讓指令消失。
+    # ntfy 免費版只快取約 12 小時，Telegram 的 getUpdates 也只留最近的
+    # 訊息，所以只要輪詢遠密於那個窗口，偶爾漏跑一次也不會讓指令消失。
     - cron: '13,43 * * * *'
   workflow_dispatch:
 
@@ -36,6 +36,9 @@ jobs:
       - name: Read and apply commands
         id: apply
         env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMAND_SECRET: ${{ secrets.COMMAND_SECRET }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_COMMAND_TOPIC: ${{ secrets.NTFY_COMMAND_TOPIC }}
           NTFY_COMMAND_SECRET: ${{ secrets.NTFY_COMMAND_SECRET }}
@@ -51,7 +54,7 @@ jobs:
           git config user.name  "flight-tracker[bot]"
           git config user.email "flight-tracker[bot]@users.noreply.github.com"
           git add routes.yaml data/
-          git commit -m "chore: 套用來自 ntfy 的指令"
+          git commit -m "chore: 套用來自指令頻道的變更"
           for attempt in 1 2 3; do
             git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
             echo "推送失敗，第 ${attempt} 次重試..."
@@ -64,6 +67,8 @@ jobs:
       - name: Track now if asked
         if: steps.apply.outputs.run_now == 'true'
         env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
           LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}

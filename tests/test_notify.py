@@ -8,14 +8,16 @@ from tracker.alerts import Alert
 from tracker.notify import available_notifiers, deliver, format_alerts
 from tracker.notify.line import LineNotifier
 from tracker.notify.ntfy import NtfyNotifier, _encode_header, poll_messages
+from tracker.notify.telegram import TelegramNotifier, poll_updates
 
 from conftest import make_quote
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, text=""):
+    def __init__(self, status_code=200, text="", json_body=None):
         self.status_code = status_code
         self.text = text
+        self._json_body = json_body
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -23,9 +25,14 @@ class FakeResponse:
 
             raise requests.HTTPError(f"HTTP {self.status_code}")
 
+    def json(self):
+        return self._json_body
 
-def FakeGet(body: str) -> FakeResponse:
-    """A successful poll response carrying `body`."""
+
+def FakeGet(body) -> FakeResponse:
+    """A successful poll response carrying `body` (raw text, or a dict for JSON APIs)."""
+    if isinstance(body, dict):
+        return FakeResponse(200, json_body=body)
     return FakeResponse(200, body)
 
 
@@ -53,6 +60,28 @@ def test_ntfy_is_selected_by_topic_alone():
     notifiers = available_notifiers(env={"NTFY_TOPIC": "secret-topic"})
 
     assert [n.name for n in notifiers] == ["ntfy"]
+
+
+def test_telegram_needs_both_token_and_chat_id():
+    assert available_notifiers(env={"TELEGRAM_BOT_TOKEN": "t"}) == []
+    assert available_notifiers(env={"TELEGRAM_CHAT_ID": "123"}) == []
+    assert [
+        n.name for n in available_notifiers(env={"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "123"})
+    ] == ["telegram"]
+
+
+def test_telegram_is_tried_before_ntfy_and_line():
+    notifiers = available_notifiers(
+        env={
+            "TELEGRAM_BOT_TOKEN": "t",
+            "TELEGRAM_CHAT_ID": "123",
+            "NTFY_TOPIC": "x",
+            "LINE_CHANNEL_TOKEN": "lt",
+            "LINE_USER_ID": "U1",
+        }
+    )
+
+    assert [n.name for n in notifiers] == ["telegram", "ntfy", "line"]
 
 
 def test_line_needs_both_token_and_user_id():
@@ -213,6 +242,103 @@ def test_line_surfaces_the_api_error_body(monkeypatch):
 
     with pytest.raises(Exception, match="Invalid to"):
         LineNotifier(token="t", user_id="bad").send("s", "b")
+
+
+def test_telegram_needs_a_token_and_chat_id():
+    with pytest.raises(Exception, match="TELEGRAM_BOT_TOKEN"):
+        TelegramNotifier(token="", chat_id="123")
+    with pytest.raises(Exception, match="TELEGRAM_BOT_TOKEN"):
+        TelegramNotifier(token="t", chat_id="")
+
+
+def test_telegram_sends_plain_text_to_the_configured_chat(captured):
+    TelegramNotifier(token="tok", chat_id="123").send("標題", "內文")
+
+    call = captured[0]
+    assert call["url"] == "https://api.telegram.org/bottok/sendMessage"
+    assert call["json"] == {"chat_id": "123", "text": "標題\n\n內文"}
+
+
+def test_telegram_truncates_over_long_messages(captured):
+    TelegramNotifier(token="t", chat_id="1").send("標題", "x" * 5000)
+
+    text = captured[0]["json"]["text"]
+    assert len(text) == 4096
+    assert text.endswith("…")
+
+
+def test_telegram_surfaces_the_api_error_body():
+    def fake_post(*a, **k):
+        return FakeResponse(400, "chat not found")
+
+    import tracker.notify.telegram as telegram_mod
+
+    orig = telegram_mod.requests.post
+    telegram_mod.requests.post = fake_post
+    try:
+        with pytest.raises(Exception, match="chat not found"):
+            TelegramNotifier(token="t", chat_id="bad").send("s", "b")
+    finally:
+        telegram_mod.requests.post = orig
+
+
+def test_telegram_poll_returns_text_and_ids(monkeypatch):
+    payload = {
+        "ok": True,
+        "result": [
+            {"update_id": 10, "message": {"text": "hunter2 /add BNE"}},
+            {"update_id": 11, "message": {"text": "hunter2 /run"}},
+        ],
+    }
+    monkeypatch.setattr("requests.get", lambda *a, **k: FakeGet(payload))
+
+    messages = poll_updates("tok")
+
+    assert messages == [
+        {"id": "10", "message": "hunter2 /add BNE"},
+        {"id": "11", "message": "hunter2 /run"},
+    ]
+
+
+def test_telegram_poll_keeps_non_text_updates_to_advance_the_cursor(monkeypatch):
+    payload = {"ok": True, "result": [{"update_id": 5, "message": {"sticker": {}}}]}
+    monkeypatch.setattr("requests.get", lambda *a, **k: FakeGet(payload))
+
+    assert poll_updates("tok") == [{"id": "5", "message": ""}]
+
+
+def test_telegram_poll_computes_offset_from_since(monkeypatch):
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen.update({"url": url, **kwargs})
+        return FakeGet({"ok": True, "result": []})
+
+    monkeypatch.setattr("requests.get", fake_get)
+    poll_updates("tok", since="41")
+
+    assert seen["url"] == "https://api.telegram.org/bottok/getUpdates"
+    assert seen["params"] == {"offset": 42}
+
+
+def test_telegram_poll_ignores_a_corrupt_cursor(monkeypatch):
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen.update({"url": url, **kwargs})
+        return FakeGet({"ok": True, "result": []})
+
+    monkeypatch.setattr("requests.get", fake_get)
+    poll_updates("tok", since="not-a-number")
+
+    assert seen["params"] == {}
+
+
+def test_telegram_poll_raises_on_api_error(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: FakeGet({"ok": False, "description": "Unauthorized"}))
+
+    with pytest.raises(Exception, match="Unauthorized"):
+        poll_updates("bad-token")
 
 
 # ---------------------------------------------------------------- fan-out

@@ -24,6 +24,8 @@ jobs:
 
       - name: Send a test message to every configured channel
         env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
           LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
@@ -33,20 +35,24 @@ jobs:
       - name: Show which command-channel secrets are set
         if: always()
         env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           COMMAND_TOPIC: ${{ secrets.NTFY_COMMAND_TOPIC }}
-          COMMAND_SECRET: ${{ secrets.NTFY_COMMAND_SECRET }}
+          COMMAND_SECRET: ${{ secrets.COMMAND_SECRET }}
+          LEGACY_COMMAND_SECRET: ${{ secrets.NTFY_COMMAND_SECRET }}
         run: |
           # 只回報有沒有設，永遠不印出值本身
           {
             echo "### 指令頻道設定"
-            if [ -n "$COMMAND_TOPIC" ]; then
+            if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+              echo "- TELEGRAM_BOT_TOKEN：已設定（優先使用 Telegram 當指令頻道）"
+            elif [ -n "$COMMAND_TOPIC" ]; then
               echo "- NTFY_COMMAND_TOPIC：已設定"
             else
-              echo "- NTFY_COMMAND_TOPIC：**未設定** —— 從手機改航線的功能不會運作"
+              echo "- **未設定 TELEGRAM_BOT_TOKEN 或 NTFY_COMMAND_TOPIC** —— 從手機改航線的功能不會運作"
             fi
-            if [ -n "$COMMAND_SECRET" ]; then
-              echo "- NTFY_COMMAND_SECRET：已設定"
+            if [ -n "$COMMAND_SECRET" ] || [ -n "$LEGACY_COMMAND_SECRET" ]; then
+              echo "- COMMAND_SECRET：已設定"
             else
-              echo "- NTFY_COMMAND_SECRET：**未設定** —— 為安全起見，指令一律不會被處理"
+              echo "- COMMAND_SECRET：**未設定** —— 為安全起見，指令一律不會被處理"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

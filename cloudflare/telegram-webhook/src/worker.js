@@ -54,8 +54,16 @@ export default {
     // exactly as it does for the polled path, so this being bypassed some
     // other way is not a security hole, just a wasted Actions run.
     if (!env.COMMAND_SECRET || !text.startsWith(env.COMMAND_SECRET)) {
+      // Visible only via `wrangler tail` -- never the message text itself,
+      // just enough to tell "ignored" apart from "dispatched" while debugging.
+      console.log(
+        env.COMMAND_SECRET
+          ? `ignored: message does not start with COMMAND_SECRET (length ${text.length})`
+          : "ignored: COMMAND_SECRET is not set on this Worker"
+      );
       return new Response("ok", { status: 200 });
     }
+    console.log(`matched COMMAND_SECRET, dispatching update_id=${updateId}`);
 
     const dispatchUrl =
       `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}` +

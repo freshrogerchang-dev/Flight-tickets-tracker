@@ -307,6 +307,22 @@ def test_telegram_poll_keeps_non_text_updates_to_advance_the_cursor(monkeypatch)
     assert poll_updates("tok") == [{"id": "5", "message": ""}]
 
 
+# The real failure this reproduces: a TELEGRAM_BOT_TOKEN GitHub secret pasted
+# with a trailing newline turned into a literal %0A in the URL, and Telegram
+# answered with a bare 404 that gave no hint it was whitespace in the token.
+def test_telegram_poll_strips_a_trailing_newline_from_the_token(monkeypatch):
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        return FakeGet({"ok": True, "result": []})
+
+    monkeypatch.setattr("requests.get", fake_get)
+    poll_updates("tok\n")
+
+    assert seen["url"] == "https://api.telegram.org/bottok/getUpdates"
+
+
 def test_telegram_poll_computes_offset_from_since(monkeypatch):
     seen = {}
 

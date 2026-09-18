@@ -71,6 +71,10 @@ def poll_updates(token: str, *, since: str = "") -> list[dict]:
     forever. Non-text updates carry an empty ``message``, which never matches
     a command's secret prefix and is silently skipped downstream.
     """
+    # A GitHub secret pasted with a trailing newline is common enough that it
+    # has actually happened here: an un-stripped token turns into a %0A in the
+    # URL, which Telegram answers with a plain 404 -- no hint it was whitespace.
+    token = token.strip()
     params: dict = {}
     if since:
         try:

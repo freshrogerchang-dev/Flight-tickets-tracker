@@ -442,6 +442,117 @@ def test_report_asks_for_a_report(config):
     assert run("hunter2 /report", config).report_now
 
 
+def test_status_asks_for_a_status_reply(config):
+    outcome = run("hunter2 /status", config)
+
+    assert outcome.status_now
+    assert not outcome.changed
+    assert outcome.message == ""
+
+
+def test_reset_asks_for_a_reset(config):
+    outcome = run("hunter2 /reset", config)
+
+    assert outcome.reset_now
+    assert not outcome.changed
+    assert outcome.message == ""
+
+
+# ---------------------------------------------------------------- aliases
+
+
+def test_time_is_an_alias_for_scan(config):
+    run("hunter2 /time 2027-03-01 2027-03-14 12", config)
+
+    window = load_config(config).routes[0].windows[0]
+    assert window.departs[0].isoformat() == "2027-03-01"
+    assert window.nights == 12
+
+
+def test_location_is_an_alias_for_to(config):
+    run("hunter2 /location SYD OOL BNE", config)
+
+    assert load_config(config).routes[0].destinations == ("SYD", "OOL", "BNE")
+
+
+# ---------------------------------------------------------------- /newroute and /delroute
+
+
+def test_newroute_creates_a_whole_new_route(config):
+    outcome = run("hunter2 /newroute 台北-福岡 TPE FUK 2027-06-05 7 20000", config)
+
+    assert outcome.changed
+    assert "新增路線" in outcome.message
+    names = [r.name for r in load_config(config).routes]
+    assert "台北-福岡" in names
+
+    new_route = next(r for r in load_config(config).routes if r.name == "台北-福岡")
+    assert new_route.origins == ("TPE",)
+    assert new_route.destinations == ("FUK",)
+    assert new_route.trip == "round"
+    assert new_route.windows[0].nights == 7
+    assert new_route.windows[0].departs[0].isoformat() == "2027-06-05"
+    assert new_route.alert_below == 20000
+    # inherits max_stops from top-level defaults rather than hardcoding one
+    assert new_route.options.max_stops == 2
+
+
+def test_newroute_without_a_threshold_is_optional(config):
+    run("hunter2 /newroute 台北-福岡 TPE FUK 2027-06-05 7", config)
+
+    new_route = next(r for r in load_config(config).routes if r.name == "台北-福岡")
+    assert new_route.alert_below is None
+
+
+def test_newroute_rejects_a_name_already_in_use(config):
+    with pytest.raises(CommandError, match="已經有路線叫"):
+        run("hunter2 /newroute 台北-澳洲東岸 TPE FUK 2027-06-05 7", config)
+
+
+def test_newroute_rejects_bad_airport_codes(config):
+    with pytest.raises(CommandError, match="不像機場代碼"):
+        run("hunter2 /newroute 新路線 台北 FUK 2027-06-05 7", config)
+
+
+def test_newroute_rejects_wrong_argument_counts(config):
+    for args in ("台北-福岡 TPE FUK 2027-06-05", "台北-福岡 TPE FUK 2027-06-05 7 20000 extra"):
+        with pytest.raises(CommandError, match="用法"):
+            run(f"hunter2 /newroute {args}", config)
+
+
+def test_newroute_reports_the_query_budget(config):
+    outcome = run("hunter2 /newroute 台北-福岡 TPE FUK 2027-06-05 7", config)
+
+    # One route, one fixed departure date, one destination: exactly one query.
+    assert "共 32 次查詢" in outcome.message
+
+
+def test_delroute_removes_a_route(config):
+    outcome = run("hunter2 /delroute 雪梨進黃金海岸出", config)
+
+    assert outcome.changed
+    names = [r.name for r in load_config(config).routes]
+    assert "雪梨進黃金海岸出" not in names
+    assert len(names) == 1
+
+
+def test_delroute_refuses_to_empty_the_config(config):
+    run("hunter2 /delroute 雪梨進黃金海岸出", config)
+
+    with pytest.raises(CommandError, match="最後一條路線"):
+        run("hunter2 /delroute 台北-澳洲東岸", config)
+
+
+def test_delroute_rejects_an_unknown_name(config):
+    with pytest.raises(CommandError, match="找不到路線"):
+        run("hunter2 /delroute 不存在的路線", config)
+
+
+def test_delroute_requires_exactly_one_argument(config):
+    with pytest.raises(CommandError, match="用法"):
+        run("hunter2 /delroute", config)
+
+
 # ---------------------------------------------------------------- batch processing
 
 

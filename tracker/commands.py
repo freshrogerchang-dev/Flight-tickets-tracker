@@ -35,24 +35,32 @@ AIRPORT_CODE = re.compile(r"^[A-Z]{3}$")
 
 HELP_TEXT = """可用指令：
 /routes                     看目前設定
+/status                     看設定＋每條路線最新查到的價格
 /scan 起日 迄日 晚數        改掃描區間，例：/scan 2027-03-01 2027-03-20 14
 /scan 出發日 晚數           只掃一天，例：/scan 2027-03-05 14
+/time ...                   /scan 的別名（改日期，名字比較好記）
 /nights 晚數                只改待幾晚
 /add 機場代碼               加目的地，例：/add BNE
 /rm 機場代碼                移除目的地
 /to 機場代碼...             整個換掉目的地，例：/to BNE 或 /to SYD OOL BNE
+/location 機場代碼...       /to 的別名（換目的地，名字比較好記）
 /from 機場代碼...           整個換掉出發地，例：/from TPE KHH
 /rename 新名稱              幫這條路線改名，例：/rename 台北-布里斯本
+/newroute 名稱 出發地 目的地 出發日 晚數 [門檻]
+                             新增一整條新路線，例：/newroute 台北-福岡 TPE FUK 2027-06-05 7 20000
+/delroute 名稱              刪除一整條路線（不能刪到一條都不剩）
 /price 金額                 改通知門檻，例：/price 24000
 /drop 百分比                改跌價通知門檻，例：/drop 12
 /stops 轉機次數上限         例：/stops 0（只要直飛）
 /run                        立刻查一輪
 /report                     看最低價排名
+/reset                      清空所有已通知紀錄，讓之前通知過的低價下次符合門檻能再通知一次
 /help                       這則說明
 
 指令要加通關碼，格式：<通關碼> /add BNE
 多條路線時用 @名稱 指定，例：/add BNE @台北-澳洲東岸
-（/to /from /rename 對多段行程路線不生效，那種要直接改 legs）"""
+（/to /from /rename 對多段行程路線不生效，那種要直接改 legs）
+（/newroute 只能建立來回行程；單程或多段行程要直接編輯 routes.yaml）"""
 
 
 class CommandError(ValueError):
@@ -75,9 +83,13 @@ class CommandOutcome:
     ok: bool
     message: str
     changed: bool = False
-    #: Set by ``/run`` and ``/report``, which the CLI acts on after applying edits.
+    #: Set by ``/run``, ``/report``, ``/status`` and ``/reset``, which the CLI
+    #: acts on after applying edits -- each needs data (price history, alert
+    #: state) that lives outside routes.yaml and isn't available in here.
     run_now: bool = False
     report_now: bool = False
+    status_now: bool = False
+    reset_now: bool = False
 
 
 class Cursor:
@@ -261,7 +273,7 @@ def _pick_route(document, target: str | None):
     raise CommandError("只有多段行程路線，請用 @名稱 指定要改哪一條")
 
 
-def _describe(config) -> str:
+def describe_routes(config) -> str:
     lines = []
     for route in config.routes:
         if route.trip == "multi":
@@ -335,9 +347,15 @@ def apply(command: Command, config_path: str | Path) -> CommandOutcome:
     if command.verb == "report":
         return CommandOutcome(True, "", report_now=True)
 
+    if command.verb == "status":
+        return CommandOutcome(True, "", status_now=True)
+
+    if command.verb == "reset":
+        return CommandOutcome(True, "", reset_now=True)
+
     if command.verb == "routes":
         try:
-            return CommandOutcome(True, _describe(load_config(path)))
+            return CommandOutcome(True, describe_routes(load_config(path)))
         except ConfigError as exc:
             raise CommandError(f"讀不到設定檔：{exc}") from None
 
@@ -346,6 +364,18 @@ def apply(command: Command, config_path: str | Path) -> CommandOutcome:
         document = editor.load(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise CommandError(f"讀不到 {path}：{exc}") from None
+
+    if command.verb in ("newroute", "addroute"):
+        # Operates on the whole routes list, not one picked route -- there is
+        # no existing route to target yet.
+        summary = _add_route(document, command.args)
+        budget = _validate_and_write(document, path)
+        return CommandOutcome(True, f"{summary}（{budget}）", changed=True)
+
+    if command.verb in ("delroute", "rmroute"):
+        summary = _remove_route(document, command.args)
+        budget = _validate_and_write(document, path)
+        return CommandOutcome(True, f"{summary}（{budget}）", changed=True)
 
     route = _pick_route(document, command.target)
     name = str(route.get("name", "?"))
@@ -497,6 +527,73 @@ def _edit_from(route, args) -> str:
     return _replace_codes(route, "from", args)
 
 
+def _add_route(document, args) -> str:
+    """Create a whole new round-trip route, appended to ``routes``.
+
+    Deliberately round-trip only: a one-way or multi-city route needs shapes
+    (no ``nights``, or a ``legs`` list) that don't fit one command line without
+    getting as fiddly as just editing routes.yaml directly.
+    """
+    if len(args) not in (5, 6):
+        raise CommandError(
+            "用法：/newroute 名稱 出發地 目的地 出發日 晚數 [門檻金額]，"
+            "例：/newroute 台北-福岡 TPE FUK 2027-06-05 7 20000"
+        )
+    name, origin_raw, destination_raw, depart_raw, nights_raw, *rest = args
+
+    routes = document.get("routes")
+    if routes is None:
+        raise CommandError("routes.yaml 裡沒有 routes 欄位")
+    if any(str(r.get("name", "")) == name for r in routes):
+        raise CommandError(f"已經有路線叫 {name} 了，用 /scan /to 之類的指令去改它，或先 /delroute 舊的")
+
+    origin, destination = origin_raw.upper(), destination_raw.upper()
+    if not AIRPORT_CODE.match(origin):
+        raise CommandError(f"{origin_raw} 不像機場代碼（要三個英文字母，例如 TPE）")
+    if not AIRPORT_CODE.match(destination):
+        raise CommandError(f"{destination_raw} 不像機場代碼（要三個英文字母，例如 FUK）")
+
+    depart = _as_date(depart_raw)
+    nights = _as_positive_int(nights_raw, "晚數")
+    alert_below = _as_positive_int(rest[0], "門檻金額") if rest else None
+
+    entry = {
+        "name": name,
+        "from": origin,
+        "to": destination,
+        "trip": "round",
+        "windows": [{"depart": depart, "nights": nights}],
+    }
+    if alert_below is not None:
+        entry["alert_below"] = alert_below
+    routes.append(entry)
+
+    label = f"新增路線 [{name}] {origin} → {destination}，{depart} 出發、待 {nights} 晚"
+    if alert_below is not None:
+        label += f"，門檻 {alert_below:,}"
+    return label
+
+
+def _remove_route(document, args) -> str:
+    if len(args) != 1:
+        raise CommandError("用法：/delroute 名稱，例：/delroute 台北-福岡")
+    name = args[0]
+
+    routes = document.get("routes")
+    if not routes:
+        raise CommandError("routes.yaml 裡沒有任何路線")
+    if len(routes) == 1:
+        raise CommandError("這是最後一條路線，刪掉就沒東西可追了。要換地方用 /to，不是 /delroute")
+
+    for index, route in enumerate(routes):
+        if str(route.get("name", "")) == name:
+            del routes[index]
+            return f"刪除路線 [{name}]"
+
+    names = "、".join(str(r.get("name", "?")) for r in routes)
+    raise CommandError(f"找不到路線 {name}，目前有：{names}")
+
+
 def _edit_price(route, args) -> str:
     if len(args) != 1:
         raise CommandError("用法：/price 金額，例：/price 24000")
@@ -530,11 +627,13 @@ def _edit_stops(route, args) -> str:
 
 _EDITS = {
     "scan": _edit_scan,
+    "time": _edit_scan,  # alias: easier to remember than "scan" for "change the date"
     "nights": _edit_nights,
     "add": _edit_add,
     "rm": _edit_remove,
     "remove": _edit_remove,
     "to": _edit_to,
+    "location": _edit_to,  # alias: easier to remember than "to" for "change the destination"
     "from": _edit_from,
     "price": _edit_price,
     "below": _edit_price,

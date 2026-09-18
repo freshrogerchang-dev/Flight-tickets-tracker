@@ -257,7 +257,7 @@ def _command_source():
 
 def cmd_commands(args: argparse.Namespace) -> int:
     """Poll the configured command channel and apply whatever was sent."""
-    from .commands import Cursor, process
+    from .commands import Cursor, describe_routes, process
 
     channel, poll, secret = _command_source()
     if channel is None:
@@ -288,13 +288,15 @@ def cmd_commands(args: argparse.Namespace) -> int:
         return 0
 
     replies = []
-    run_now = report_now = False
+    run_now = report_now = status_now = reset_now = False
     for item in handled:
         print(f"/{item.command.verb} → {item.outcome.message or '(執行)'}", file=sys.stderr)
         if item.outcome.message:
             replies.append(item.outcome.message)
         run_now |= item.outcome.run_now
         report_now |= item.outcome.report_now
+        status_now |= item.outcome.status_now
+        reset_now |= item.outcome.reset_now
 
     if report_now:
         store = PriceStore(args.prices)
@@ -307,6 +309,32 @@ def cmd_commands(args: argparse.Namespace) -> int:
             replies.append("近 30 天最低價：\n" + "\n".join(lines))
         else:
             replies.append("還沒有價格紀錄。")
+
+    if status_now:
+        lines = []
+        try:
+            lines.append(describe_routes(load_config(args.config)))
+        except ConfigError as exc:
+            lines.append(f"讀不到設定檔：{exc}")
+
+        latest = PriceStore(args.prices).latest_per_route()
+        if latest:
+            lines.append("最新查到：")
+            for row in latest:
+                when = row["fetched_at"][:16].replace("T", " ")
+                lines.append(
+                    f"  [{row['route_name']}] {row['itinerary']} {int(row['price']):,} {row['currency']}"
+                    f"（{when} UTC）"
+                )
+        else:
+            lines.append("還沒有任何查價紀錄。")
+        replies.append("\n".join(lines))
+
+    if reset_now:
+        state = AlertState(args.state)
+        count = state.clear()
+        state.save()
+        replies.append(f"已清空 {count} 筆已通知紀錄，之前通知過的低價下次符合門檻會再通知一次。")
 
     # Sent through every configured notify channel, not just the one the
     # command arrived on -- someone running LINE + Telegram together should
@@ -430,10 +458,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.set_defaults(func=cmd_report)
 
     # commands
-    p_commands = sub.add_parser("commands", help="讀取 ntfy 指令頻道，套用你從手機發的指令")
+    p_commands = sub.add_parser("commands", help="讀取指令頻道（Telegram 或 ntfy），套用你從手機發的指令")
     p_commands.add_argument("--config", default=DEFAULT_CONFIG)
     p_commands.add_argument("--cursor", default=DEFAULT_CURSOR)
     p_commands.add_argument("--prices", default=DEFAULT_PRICES)
+    p_commands.add_argument("--state", default=DEFAULT_STATE)
     p_commands.set_defaults(func=cmd_commands)
 
     # test-notify

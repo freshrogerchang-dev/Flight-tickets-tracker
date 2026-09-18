@@ -69,6 +69,17 @@ class AlertState:
             "currency": quote.currency,
         }
 
+    def clear(self) -> int:
+        """Wipe every dedup record. Returns how many were cleared.
+
+        Used by ``/reset``: a deliberate, whole-state wipe so a price already
+        notified about can trigger again, not a per-route operation -- the
+        dedup key carries no route name to select by (see ``quote_key``).
+        """
+        count = len(self._state)
+        self._state = {}
+        return count
+
     def prune(self, *, now: datetime | None = None, keep_days: int = 180) -> None:
         """Drop entries for itineraries whose departure is long past."""
         now = now or datetime.now(timezone.utc)

@@ -22,6 +22,7 @@ def _args(tmp_path, **overrides):
         "config": str(tmp_path / "routes.yaml"),
         "cursor": str(tmp_path / "cursor.json"),
         "prices": str(tmp_path / "prices.csv"),
+        "state": str(tmp_path / "alerts.json"),
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -172,6 +173,134 @@ routes:
 
     cursor_state = json.loads((tmp_path / "cursor.json").read_text(encoding="utf-8"))
     assert cursor_state == {"last_id": "1"}
+
+
+def _configure_telegram(monkeypatch, message: str, *, sent: list):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("COMMAND_SECRET", "s3cret")
+    monkeypatch.delenv("NTFY_COMMAND_TOPIC", raising=False)
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("LINE_CHANNEL_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "tracker.notify.telegram.poll_updates",
+        lambda token, since="": [{"id": "1", "message": message}],
+    )
+    monkeypatch.setattr(
+        "tracker.notify.telegram.TelegramNotifier.send",
+        lambda self, subject, body: sent.append((subject, body)),
+    )
+
+
+def test_cmd_commands_status_combines_config_and_latest_prices(tmp_path, monkeypatch):
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    prices_path = tmp_path / "prices.csv"
+    prices_path.write_text(
+        "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
+        "airlines,stops,duration_minutes,source,url\n"
+        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        "18928,TWD,China Airlines,0,600,fast_flights,https://example.invalid\n",
+        encoding="utf-8",
+    )
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /status", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), prices=str(prices_path)))
+
+    assert rc == 0
+    assert len(sent) == 1
+    body = sent[0][1]
+    assert "台北-布里斯本" in body
+    assert "最新查到" in body
+    assert "18,928" in body
+
+
+def test_cmd_commands_status_without_price_history(tmp_path, monkeypatch):
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /status", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path)))
+
+    assert rc == 0
+    assert "還沒有任何查價紀錄" in sent[0][1]
+
+
+def test_cmd_commands_reset_clears_alert_state(tmp_path, monkeypatch):
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    state_path = tmp_path / "alerts.json"
+    state_path.write_text(
+        '{"TPE>BNE>TPE|2027-06-05|2027-06-16|TWD": {"sent_at": "2026-09-17T01:00:00+00:00", '
+        '"price": 18928, "currency": "TWD"}}',
+        encoding="utf-8",
+    )
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /reset", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), state=str(state_path)))
+
+    assert rc == 0
+    assert "已清空 1 筆已通知紀錄" in sent[0][1]
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {}
 
 
 def test_cmd_commands_reports_a_poll_failure_without_raising(tmp_path, monkeypatch, capsys):

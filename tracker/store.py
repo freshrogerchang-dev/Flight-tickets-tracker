@@ -160,6 +160,29 @@ class PriceStore:
                 best[key] = row
         return sorted(best.values(), key=lambda r: int(r["price"]))
 
+    def latest_per_route(self) -> list[dict]:
+        """The cheapest quote from each route's most recent run, one row per route.
+
+        For ``/status``: a snapshot of "what did we see last", not the
+        all-time cheapest -- that's what ``/report`` is for.
+        """
+        latest_stamp: dict[str, str] = {}
+        for row in self.rows():
+            name = row.get("route_name", "")
+            stamp = row.get("fetched_at", "")
+            if name not in latest_stamp or stamp > latest_stamp[name]:
+                latest_stamp[name] = stamp
+
+        best: dict[str, dict] = {}
+        for row in self.rows():
+            name = row.get("route_name", "")
+            if row.get("fetched_at") != latest_stamp.get(name):
+                continue
+            current = best.get(name)
+            if current is None or int(row["price"]) < int(current["price"]):
+                best[name] = row
+        return sorted(best.values(), key=lambda r: r["route_name"])
+
     def cheapest_per_pair(self, *, group: str | None = None, since: date | None = None) -> list[dict]:
         """Cheapest row per origin-destination pair, whatever the dates.
 

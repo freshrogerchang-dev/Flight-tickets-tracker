@@ -319,13 +319,20 @@ def cmd_commands(args: argparse.Namespace) -> int:
 
     if report_now:
         store = PriceStore(args.prices)
-        rows = store.cheapest_per_pair(since=date.today() - timedelta(days=30))[:5]
-        if rows:
-            lines = [
-                f"{i}. {r['itinerary']} {int(r['price']):,} {r['currency']} {r['depart']}"
-                for i, r in enumerate(rows, start=1)
-            ]
-            replies.append("近 30 天最低價：\n" + "\n".join(lines))
+        grouped = store.top_n_per_route(n=3, since=date.today() - timedelta(days=30))
+        if grouped:
+            sections = []
+            for route_name, rows in grouped:
+                lines = [f"[{route_name}]"]
+                for i, r in enumerate(rows, start=1):
+                    dates = r["depart"] + (f"~{r['ret']}" if r["ret"] else "")
+                    lines.append(
+                        f"{i}. {r['itinerary']} {int(r['price']):,} {r['currency']}  {dates}  {r['airlines'] or '?'}"
+                    )
+                    if r["url"]:
+                        lines.append(f"   {r['url']}")
+                sections.append("\n".join(lines))
+            replies.append("近 30 天最低價：\n\n" + "\n\n".join(sections))
         else:
             replies.append("還沒有價格紀錄。")
 

@@ -237,6 +237,160 @@ routes:
     assert "18,928" in body
 
 
+def test_cmd_commands_report_includes_dates_airline_and_link(tmp_path, monkeypatch):
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    prices_path = tmp_path / "prices.csv"
+    prices_path.write_text(
+        "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
+        "airlines,stops,duration_minutes,source,url\n"
+        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        "18928,TWD,China Airlines,0,600,fast_flights,https://example.invalid/flight\n",
+        encoding="utf-8",
+    )
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /report", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), prices=str(prices_path)))
+
+    assert rc == 0
+    body = sent[0][1]
+    assert "[台北-布里斯本]" in body
+    assert "18,928" in body
+    assert "2027-06-05~2027-06-16" in body, "shows both outbound and return dates"
+    assert "China Airlines" in body
+    assert "https://example.invalid/flight" in body
+
+
+def test_cmd_commands_report_separates_routes_and_caps_each_at_three(tmp_path, monkeypatch):
+    """Each route gets its own [名稱] section with at most its 3 cheapest itineraries."""
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-雪梨
+    from: TPE
+    to: SYD
+    trip: round
+    windows:
+      - depart_range: [2027-06-01, 2027-06-05]
+        nights: 11
+    alert_below: 30000
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    header = (
+        "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
+        "airlines,stops,duration_minutes,source,url\n"
+    )
+    # 台北-雪梨: four distinct itineraries (different depart dates), so the
+    # 4th-cheapest must be left out once capped at 3.
+    syd_rows = "".join(
+        f"2026-09-17T0{i}:00:00+00:00,台北-雪梨,,TPE>SYD>TPE,TPE,SYD,2027-06-0{i},2027-06-1{i},"
+        f"{25000 + i * 1000},TWD,China Airlines,0,600,fast_flights,https://example.invalid/syd{i}\n"
+        for i in range(1, 5)
+    )
+    bne_row = (
+        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        "18928,TWD,EVA Air,0,600,fast_flights,https://example.invalid/bne\n"
+    )
+    prices_path = tmp_path / "prices.csv"
+    prices_path.write_text(header + syd_rows + bne_row, encoding="utf-8")
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /report", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), prices=str(prices_path)))
+
+    assert rc == 0
+    body = sent[0][1]
+    assert "[台北-布里斯本]" in body
+    assert "[台北-雪梨]" in body
+    # cheapest route's section comes first
+    assert body.index("[台北-布里斯本]") < body.index("[台北-雪梨]")
+    # capped at 3 for 台北-雪梨 even though 4 itineraries exist
+    syd_section = body[body.index("[台北-雪梨]") :]
+    assert syd_section.count("TPE>SYD>TPE") == 3
+    assert "syd4" not in syd_section, "the 4th-cheapest (most expensive) itinerary must be dropped"
+    # 台北-布里斯本 only ever had one itinerary
+    assert body.count("TPE>BNE>TPE") == 1
+
+
+def test_cmd_commands_report_omits_a_missing_link(tmp_path, monkeypatch):
+    """A quote with no url (e.g. from a provider that doesn't supply one) must not print a blank line."""
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    prices_path = tmp_path / "prices.csv"
+    prices_path.write_text(
+        "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
+        "airlines,stops,duration_minutes,source,url\n"
+        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        "18928,TWD,China Airlines,0,600,fast_flights,\n",
+        encoding="utf-8",
+    )
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /report", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), prices=str(prices_path)))
+
+    assert rc == 0
+    body = sent[0][1]
+    assert "[台北-布里斯本]\n1. TPE>BNE>TPE" in body, "no blank line between the header and the price line"
+    section = body[body.index("[台北-布里斯本]") :]
+    assert not any(line.strip() == "" for line in section.splitlines()[1:]), "no blank line where the url would go"
+
+
 def test_cmd_commands_status_without_price_history(tmp_path, monkeypatch):
     routes_yaml = """\
 currency: TWD

@@ -160,6 +160,23 @@ class PriceStore:
                 best[key] = row
         return sorted(best.values(), key=lambda r: int(r["price"]))
 
+    def top_n_per_route(self, *, n: int = 3, since: date | None = None) -> list[tuple[str, list[dict]]]:
+        """Each route's own ``n`` cheapest itineraries, ranked separately.
+
+        Unlike ``cheapest_per_pair`` (one winner across a whole comparison
+        group), every tracked route stays visible here even when one route
+        is much cheaper than another -- for ``/report``, which shows routes
+        side by side rather than picking a single overall winner.
+
+        Routes are returned cheapest-route-first, so the best deal leads.
+        """
+        by_route: dict[str, list[dict]] = {}
+        for row in self.cheapest_per_key(since=since):
+            bucket = by_route.setdefault(row["route_name"], [])
+            if len(bucket) < n:
+                bucket.append(row)
+        return sorted(by_route.items(), key=lambda item: int(item[1][0]["price"]))
+
     def latest_per_route(self) -> list[dict]:
         """The cheapest quote from each route's most recent run, one row per route.
 

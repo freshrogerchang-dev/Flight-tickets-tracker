@@ -178,6 +178,55 @@ def test_cheapest_per_key_filters_by_group(store):
     assert rows[0]["itinerary"] == "TPE>NRT>TPE"
 
 
+def test_top_n_per_route_keeps_every_route_separate(store):
+    """Unlike cheapest_per_pair, a much cheaper route must not crowd out the others."""
+    store.append(
+        [
+            make_quote(9000, route_name="日本"),
+            make_quote(30000, route_name="澳洲", itinerary="TPE>SYD>TPE", destination="SYD"),
+        ]
+    )
+
+    grouped = store.top_n_per_route()
+
+    assert [name for name, _ in grouped] == ["日本", "澳洲"], "cheapest route leads"
+    assert {name: [int(r["price"]) for r in rows] for name, rows in grouped} == {
+        "日本": [9000],
+        "澳洲": [30000],
+    }
+
+
+def test_top_n_per_route_caps_each_route_at_n(store):
+    store.append(
+        [
+            make_quote(9000, route_name="日本", depart=date(2026, 12, 1)),
+            make_quote(8000, route_name="日本", depart=date(2026, 12, 2)),
+            make_quote(7000, route_name="日本", depart=date(2026, 12, 3)),
+            make_quote(6000, route_name="日本", depart=date(2026, 12, 4)),
+        ]
+    )
+
+    grouped = store.top_n_per_route(n=3)
+
+    assert len(grouped) == 1
+    name, rows = grouped[0]
+    assert [int(r["price"]) for r in rows] == [6000, 7000, 8000], "the 3 cheapest, cheapest first"
+
+
+def test_top_n_per_route_respects_since(store, now):
+    store.append(
+        [
+            make_quote(9000, route_name="日本", fetched_at=now - timedelta(days=40)),
+            make_quote(8000, route_name="日本", fetched_at=now - timedelta(days=1)),
+        ]
+    )
+
+    grouped = store.top_n_per_route(since=(now - timedelta(days=30)).date())
+
+    assert len(grouped) == 1
+    assert [int(r["price"]) for r in grouped[0][1]] == [8000]
+
+
 # ---------------------------------------------------------------- evaluate
 
 

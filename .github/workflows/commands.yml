@@ -1,17 +1,14 @@
 name: Apply commands
 
 on:
-  schedule:
-    # 每半小時讀一次指令頻道，但錯開整點與半點（用 13 分、43 分而非
-    # */30）：那兩個時間點是 GitHub 排程的負載尖峰，容易延遲甚至被丟掉。
-    # ntfy 免費版只快取約 12 小時，Telegram 的 getUpdates 也只留最近的
-    # 訊息，所以只要輪詢遠密於那個窗口，偶爾漏跑一次也不會讓指令消失。
-    #
-    # ⚠️ 如果你設定了 cloudflare/telegram-webhook/ 那個 Worker 並註冊了
-    # Telegram webhook，這個排程會開始每次都失敗：Telegram 一旦設定 webhook，
-    # 就會拒絕所有 getUpdates 呼叫（回 409）。屆時請把這個 cron 拿掉或註解掉，
-    # 改成完全靠 webhook 觸發下面的 workflow_dispatch。
-    - cron: '13,43 * * * *'
+  # 已經改成完全靠 cloudflare/telegram-webhook/ 那個 Worker 觸發（webhook 模式）。
+  # 拿掉排程輪詢是必要的，不是選配：Telegram 一旦幫這個 bot 設定了 webhook，
+  # 就會拒絕所有 getUpdates 呼叫（回 409），排程輪詢在這個模式下只會每次失敗。
+  #
+  # 想切回排程輪詢的話：跑 `curl .../deleteWebhook` 解除 webhook，再把下面這行
+  # cron 加回來：
+  #   schedule:
+  #     - cron: '13,43 * * * *'
   workflow_dispatch:
     inputs:
       message:

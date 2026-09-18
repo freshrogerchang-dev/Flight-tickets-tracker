@@ -40,15 +40,19 @@ HELP_TEXT = """可用指令：
 /nights 晚數                只改待幾晚
 /add 機場代碼               加目的地，例：/add BNE
 /rm 機場代碼                移除目的地
+/to 機場代碼...             整個換掉目的地，例：/to BNE 或 /to SYD OOL BNE
+/from 機場代碼...           整個換掉出發地，例：/from TPE KHH
+/rename 新名稱              幫這條路線改名，例：/rename 台北-布里斯本
 /price 金額                 改通知門檻，例：/price 24000
 /drop 百分比                改跌價通知門檻，例：/drop 12
-/stops 轉機次數上限         例：/stops 1
+/stops 轉機次數上限         例：/stops 0（只要直飛）
 /run                        立刻查一輪
 /report                     看最低價排名
 /help                       這則說明
 
 指令要加通關碼，格式：<通關碼> /add BNE
-多條路線時用 @名稱 指定，例：/add BNE @台北-澳洲東岸"""
+多條路線時用 @名稱 指定，例：/add BNE @台北-澳洲東岸
+（/to /from /rename 對多段行程路線不生效，那種要直接改 legs）"""
 
 
 class CommandError(ValueError):
@@ -345,6 +349,19 @@ def apply(command: Command, config_path: str | Path) -> CommandOutcome:
 
     route = _pick_route(document, command.target)
     name = str(route.get("name", "?"))
+
+    if command.verb == "rename":
+        # Needs every route's name to reject a collision, which a per-route
+        # edit function in _EDITS never sees -- handled here instead.
+        if len(command.args) != 1:
+            raise CommandError("用法：/rename 新名稱，例：/rename 台北-布里斯本")
+        new_name = command.args[0]
+        if any(str(r.get("name", "")) == new_name for r in document.get("routes") or []):
+            raise CommandError(f"已經有路線叫 {new_name} 了")
+        route["name"] = new_name
+        budget = _validate_and_write(document, path)
+        return CommandOutcome(True, f"[{name}] 改名為 {new_name}（{budget}）", changed=True)
+
     summary = _EDITS[command.verb](route, command.args) if command.verb in _EDITS else None
     if summary is None:
         raise CommandError(f"不認得的指令 /{command.verb}，輸入 /help 看可用指令")
@@ -437,10 +454,47 @@ def _edit_remove(route, args) -> str:
     if code not in destinations:
         raise CommandError(f"{code} 不在追蹤清單裡，目前是 {'、'.join(destinations)}")
     if len(destinations) == 1:
-        raise CommandError("這是最後一個目的地，移掉就沒東西可追了")
+        raise CommandError("這是最後一個目的地，移掉就沒東西可追了。整個換掉的話用 /to")
 
     destinations.remove(code)
     return f"移除目的地 {code}，現在追 {'、'.join(destinations)}"
+
+
+def _parse_codes(args) -> list[str]:
+    if not args:
+        raise CommandError("至少要給一個機場代碼")
+    codes = []
+    for raw in args:
+        code = raw.upper()
+        if not AIRPORT_CODE.match(code):
+            raise CommandError(f"{raw} 不像機場代碼（要三個英文字母，例如 BNE）")
+        codes.append(code)
+    return codes
+
+
+def _replace_codes(route, field: str, args) -> str:
+    """Replace the whole ``from``/``to`` list in one shot.
+
+    /add and /rm only nudge an existing list, and /rm refuses to empty it --
+    so swapping a single-destination route's one and only code (the exact
+    situation Google Flights returning no results for it forces) needs its own
+    command rather than a remove-then-add that can never complete.
+    """
+    which = "出發地" if field == "from" else "目的地"
+    if route.get(field) is None:
+        raise CommandError(f"這條路線沒有{which}欄位（多段行程請直接改 legs）")
+
+    codes = _parse_codes(args)
+    route[field] = codes[0] if len(codes) == 1 else _flow_seq(codes)
+    return f"{which}整個換成 {'、'.join(codes)}"
+
+
+def _edit_to(route, args) -> str:
+    return _replace_codes(route, "to", args)
+
+
+def _edit_from(route, args) -> str:
+    return _replace_codes(route, "from", args)
 
 
 def _edit_price(route, args) -> str:
@@ -480,6 +534,8 @@ _EDITS = {
     "add": _edit_add,
     "rm": _edit_remove,
     "remove": _edit_remove,
+    "to": _edit_to,
+    "from": _edit_from,
     "price": _edit_price,
     "below": _edit_price,
     "drop": _edit_drop,

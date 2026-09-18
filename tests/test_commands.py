@@ -178,6 +178,110 @@ def test_remove_rejects_something_not_tracked(config):
         run("hunter2 /rm MEL", config)
 
 
+# ---------------------------------------------------------------- /to and /from
+
+
+def test_to_replaces_a_single_destination(config):
+    """The exact gap /rm cannot close: swapping a route's one and only destination.
+
+    routes.yaml's own comparison route has two destinations, so target the
+    multi-city route's sibling isn't available here -- this exercises the
+    single-destination case a real route (the one this command was built for)
+    has, by first collapsing to one via /rm.
+    """
+    run("hunter2 /rm OOL", config)  # down to a single destination: SYD
+    outcome = run("hunter2 /to BNE", config)
+
+    assert outcome.changed
+    assert load_config(config).routes[0].destinations == ("BNE",)
+
+
+def test_to_replaces_multiple_destinations_at_once(config):
+    run("hunter2 /to SYD OOL BNE", config)
+
+    assert load_config(config).routes[0].destinations == ("SYD", "OOL", "BNE")
+
+
+def test_to_writes_a_single_code_as_a_bare_string_not_a_list(config):
+    run("hunter2 /rm OOL", config)
+    run("hunter2 /to BNE", config)
+
+    assert "to: BNE" in config.read_text(encoding="utf-8")
+    assert "to: [BNE]" not in config.read_text(encoding="utf-8")
+
+
+def test_to_rejects_bad_codes_and_changes_nothing(config):
+    before = config.read_text(encoding="utf-8")
+
+    with pytest.raises(CommandError, match="不像機場代碼"):
+        run("hunter2 /to notacode", config)
+
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_to_requires_at_least_one_code(config):
+    with pytest.raises(CommandError, match="至少要給一個機場代碼"):
+        run("hunter2 /to", config)
+
+
+def test_from_replaces_the_origin(config):
+    run("hunter2 /from KHH", config)
+
+    assert load_config(config).routes[0].origins == ("KHH",)
+
+
+def test_from_accepts_multiple_origins(config):
+    # Two origins x two existing destinations x a 15-day window would blow the
+    # query budget, so narrow the destinations first -- exactly how a real
+    # user would need to sequence it too.
+    run("hunter2 /rm OOL", config)
+    run("hunter2 /from TPE KHH", config)
+
+    assert load_config(config).routes[0].origins == ("TPE", "KHH")
+
+
+def test_to_and_from_refuse_multi_city_routes(config):
+    with pytest.raises(CommandError, match="多段行程請直接改 legs"):
+        run("hunter2 /to BNE @雪梨進黃金海岸出", config)
+
+    with pytest.raises(CommandError, match="多段行程請直接改 legs"):
+        run("hunter2 /from KHH @雪梨進黃金海岸出", config)
+
+
+# ---------------------------------------------------------------- /rename
+
+
+def test_rename_changes_the_route_name(config):
+    outcome = run("hunter2 /rename 台北-布里斯本", config)
+
+    assert outcome.changed
+    assert "[台北-澳洲東岸]" in outcome.message
+    names = [r.name for r in load_config(config).routes]
+    assert "台北-布里斯本" in names
+    assert "台北-澳洲東岸" not in names
+
+
+def test_rename_rejects_a_name_already_in_use(config):
+    with pytest.raises(CommandError, match="已經有路線叫"):
+        run("hunter2 /rename 雪梨進黃金海岸出", config)
+
+
+def test_rename_requires_exactly_one_argument(config):
+    with pytest.raises(CommandError, match="用法"):
+        run("hunter2 /rename", config)
+
+    with pytest.raises(CommandError, match="用法"):
+        run("hunter2 /rename 兩個 名字", config)
+
+
+def test_a_renamed_route_can_then_be_targeted_by_its_new_name(config):
+    run("hunter2 /rename 台北-布里斯本", config)
+
+    outcome = run("hunter2 /price 20000 @台北-布里斯本", config)
+
+    assert outcome.changed
+
+
 def test_scan_sets_a_date_range(config):
     run("hunter2 /scan 2027-03-01 2027-03-14 12", config)
 
@@ -324,6 +428,7 @@ def test_help_lists_the_commands(config):
     outcome = run("hunter2 /help", config)
 
     assert "/scan" in outcome.message and "/add" in outcome.message
+    assert "/to" in outcome.message and "/from" in outcome.message and "/rename" in outcome.message
     assert not outcome.changed
 
 

@@ -1,14 +1,16 @@
 # 機票追蹤設定檔 —— 這是唯一需要你編輯的檔案。
 #
-# 目前追：台北 → 雪梨(SYD) / 黃金海岸(OOL)，2027-06-05 出發、2027-06-16 回程（11 晚）。
+# 目前追：台北 → 雪梨(SYD) / 布里斯本(BNE)，2027-06-05 出發、2027-06-16 回程（11 晚）。
+# 全部只要直飛（max_stops: 0），不轉機。
 #
 # 改日期或路線之後，先跑 `flight-tracker run --dry-run` 確認查詢數沒爆掉。
+# 也可以從 ntfy 指令頻道下 /scan /to /stops 等指令改，見 README〈從手機改航線〉。
 
 currency: TWD
 
-# 依序嘗試，第一個查到票價的就採用。
-# fast-flights（Google Flights）對 OOL 這類航線會整批失敗，Kiwi 查得到，
-# 所以擺在後面當備援——雪梨這種正常的航線根本不會呼叫到它。
+# 依序嘗試，第一個查到票價的就採用。fast-flights（Google Flights）在少數航線
+# 上會整批失敗（例如之前追蹤黃金海岸 OOL 時），Kiwi 查得到，所以擺在後面當
+# 備援——雪梨、布里斯本這種正常的航線根本不會呼叫到它。
 providers: [fast_flights, kiwi]
 
 # 單次執行的查詢數上限。目的地數 × 日期天數很容易爆量，
@@ -21,12 +23,12 @@ baseline_days: 30
 defaults:
   adults: 1
   seat: economy
-  max_stops: 1
+  max_stops: 0
 
-# 雪梨和黃金海岸拆成兩條路線，因為兩地需要的轉機上限不同，
-# 但共用同一個 group，`report --group 台北-澳洲東岸` 仍會把它們一起排名。
+# 雪梨和布里斯本拆成兩條路線，共用同一個 group，
+# `report --group 台北-澳洲東岸` 仍會把它們一起排名。
 routes:
-  # ── 雪梨：2 段就查得到（2026-12 實測票價帶約 22k–42k，僅供參考，6 月淡季價格會不同）──
+  # ── 雪梨：China Airlines CI51 天天直飛，約 20,054 TWD 起（2027-06 實測）──
   - name: 台北-雪梨
     group: 台北-澳洲東岸
     from: TPE
@@ -38,29 +40,35 @@ routes:
     alert_below: 30000
     alert_drop_pct: 12
 
-  # ── 黃金海岸：2 段時 fast-flights 全部查詢失敗，放寬到 3 段再試 ──
-  # 沒有直飛，通常要經馬尼拉 / 新加坡 / 布里斯本，路徑比雪梨長。
-  # 若 3 段仍然全掛，改追布里斯本 BNE（開車約一小時到黃金海岸）。
-  - name: 台北-黃金海岸
+  # ── 布里斯本：原本追黃金海岸(OOL)，但 OOL 完全沒有直飛航班（Kiwi 查證：
+  # 2027-06-05~06-16 整段 0 筆結果），改追布里斯本——China Airlines CI53 /
+  # EVA Air BR325 天天直飛，約 18,928 TWD 起，比雪梨還便宜。開車約一小時
+  # 可到黃金海岸。想連 OOL 也一起比、接受轉機的話，把下面 max_stops 拿掉、
+  # to 改回 [SYD, BNE, OOL]（見檔尾備忘）。
+  - name: 台北-布里斯本
     group: 台北-澳洲東岸
     from: TPE
-    to: OOL
+    to: BNE
     trip: round
-    max_stops: 3
+    max_stops: 0
     windows:
       - nights: 11
         depart: 2027-06-05
     alert_below: 30000
     alert_drop_pct: 12
 
-  # ── 進出不同城市：雪梨進、黃金海岸出（沿東岸玩下來很常見）──────
-  # 用不到就整段刪掉。含 OOL，所以一併放寬到 3 段。
-  - name: 雪梨進黃金海岸出
+  # ── 進出不同城市：雪梨進、布里斯本出（沿東岸玩下來很常見）──────
+  # 用不到就整段刪掉。
+  # ⚠️ 回程 BNE→TPE 這個 2027-06-16 的確切日期，查證當下（2026-09）沒查到
+  # 直飛班次；但同時段前後幾乎每天都有 CI54 / BR326，這麼遠的日期航空公司
+  # 可能還沒排出完整班表，不一定是真的停飛。若一直查不到價格，可以把下面
+  # 第二段的 depart 往前後移一兩天試試，或接受偶爾查無資料。
+  - name: 雪梨進布里斯本出
     trip: multi
-    max_stops: 2
+    max_stops: 0
     legs:
       - {from: TPE, to: SYD, depart: 2027-06-05}
-      - {from: OOL, to: TPE, depart: 2027-06-16}
+      - {from: BNE, to: TPE, depart: 2027-06-16}
     alert_below: 50000
 
 # ── 其他寫法備忘 ──────────────────────────────────────────────
@@ -70,12 +78,20 @@ routes:
 #
 # 排除特定組合：
 #   exclude:
-#     - [KHH, OOL]
+#     - [KHH, BNE]
 #
 # 單程：
 #   trip: oneway
 #   windows:
 #     - depart: 2026-12-12      # 單程不需要 nights
 #
-# 布里斯本(BNE)離黃金海岸開車約一小時，票價常常更便宜，想一起比就加進去：
-#   to: [SYD, OOL, BNE]
+# 想把黃金海岸(OOL)加回來一起比價：它沒有直飛，要接受轉機，
+# 拿掉 max_stops: 0（或另外設一個較大的數字），並把 to 改成：
+#   to: [SYD, BNE, OOL]
+#
+# 也可以直接從 ntfy 指令頻道操作，不用手動改這個檔案：
+#   /to SYD BNE OOL        整個換掉目的地
+#   /stops 2               放寬轉機上限
+#   /scan 2027-07-01 14    改掃描日期
+#   /rename 新名稱          幫路線改名
+# 完整指令列表見 README，或直接對指令頻道發 /help。

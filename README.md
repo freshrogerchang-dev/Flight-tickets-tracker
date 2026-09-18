@@ -1,7 +1,8 @@
 # ✈️ 機票價格追蹤器
 
 每天自動查你指定的航線票價，存成歷史紀錄，發現便宜票就推到你手機上。
-出發地和目的地都可以填**多個點**，也支援**多段行程**（雪梨進、黃金海岸出）。
+出發地和目的地都可以填**多個點**，也支援**多段行程**（雪梨進、布里斯本出），
+可以限定只要直飛。
 
 通知走 **LINE** 和 **ntfy.sh**，而且可以**直接從 ntfy 發訊息改航線**，不用開 GitHub。
 
@@ -34,7 +35,7 @@ python -m tracker.cli query TPE SYD,OOL,BNE --depart 2026-12-20 --nights 12
 python -m tracker.cli run --dry-run
 ```
 
-目前 `routes.yaml` 追的是 **台北 → 雪梨(SYD) / 黃金海岸(OOL)**，
+目前 `routes.yaml` 追的是 **台北 → 雪梨(SYD) / 布里斯本(BNE)，只要直飛**，
 日期是預填的，請改成你真正要飛的區間。
 
 ---
@@ -75,7 +76,7 @@ routes:
 
 ### 模式 B：多個點互相比價
 
-`from` 和 `to` 都吃清單，會做笛卡兒展開。這就是目前設定檔在做的事：
+`from` 和 `to` 都吃清單，會做笛卡兒展開：
 
 ```yaml
   - name: 台北-澳洲東岸
@@ -108,29 +109,29 @@ python -m tracker.cli report --group 台北-澳洲東岸
 
 ```yaml
     from: [TPE, KHH]          # 2 個出發地 × 2 個目的地 = 4 條航線
-    to: [SYD, OOL]
+    to: [SYD, BNE]
     exclude:
-      - [KHH, OOL]            # 排除不想要的組合
+      - [KHH, BNE]            # 排除不想要的組合
 ```
 
-**目的地需要不同設定時**，拆成兩條路線、共用同一個 `group`，報表仍會一起排名：
+**目的地需要不同設定時**（例如某條要放寬轉機、其他不用），拆成兩條路線、
+共用同一個 `group`，報表仍會一起排名：
 
 ```yaml
   - name: 台北-雪梨
     group: 台北-澳洲東岸      # 兩條共用一個群組
     from: TPE
     to: SYD
-    max_stops: 2
+    max_stops: 0             # 只要直飛
 
   - name: 台北-黃金海岸
     group: 台北-澳洲東岸
     from: TPE
     to: OOL
-    max_stops: 3             # 沒直飛，路徑長，要放寬才查得到
+    max_stops: 2             # 沒直飛，要放寬才查得到
 ```
 
 `compare: true` 等同於「自己一組」；明寫 `group:` 才能讓多條路線共用一組。
-目前出貨的設定檔就是這樣拆的，原因見下面的〈已知問題〉。
 
 > ⚠️ **會爆量**：`2 個出發地 × 3 個目的地 × 31 天 = 186 次查詢`。
 > 超過 `max_queries`（預設 60）會直接中止並告訴你實際數量，不會硬跑到被 Google 擋。
@@ -141,12 +142,12 @@ python -m tracker.cli report --group 台北-澳洲東岸
 進出不同城市，一張票：
 
 ```yaml
-  - name: 雪梨進黃金海岸出
+  - name: 雪梨進布里斯本出
     trip: multi
     legs:
-      - { from: TPE, to: SYD, depart: 2026-12-12 }
-      - { from: OOL, to: TPE, depart: 2026-12-24 }
-    alert_below: 30000
+      - { from: TPE, to: SYD, depart: 2027-06-05 }
+      - { from: BNE, to: TPE, depart: 2027-06-16 }
+    alert_below: 50000
 ```
 
 ---
@@ -264,16 +265,33 @@ xK9mQ2 /run
 | `/scan 出發日 晚數` | 只掃一天 |
 | `/nights 晚數` | 只改待幾晚 |
 | `/add 代碼` | 加目的地，例：`/add BNE` |
-| `/rm 代碼` | 移除目的地 |
+| `/rm 代碼` | 移除目的地（最後一個不能移除，改用 `/to`） |
+| `/to 代碼...` | **整個換掉**目的地，例：`/to BNE` 或 `/to SYD BNE OOL` |
+| `/from 代碼...` | **整個換掉**出發地，例：`/from TPE KHH` |
+| `/rename 新名稱` | 幫這條路線改名，例：`/rename 台北-布里斯本` |
 | `/price 金額` | 改通知門檻 |
 | `/drop 百分比` | 改跌價通知門檻 |
-| `/stops 次數` | 改轉機次數上限 |
+| `/stops 次數` | 改轉機次數上限，`0` 代表只要直飛 |
 | `/run` | 立刻查一輪，不等排程 |
 | `/report` | 看最低價排名 |
 | `/help` | 指令說明 |
 
 有多條路線時用 `@名稱` 指定，例如 `xK9mQ2 /add BNE @台北-澳洲東岸`。
-不指定的話套用到第一條非多段行程的路線。
+不指定的話套用到第一條非多段行程的路線。`/to` `/from` `/rename` 對多段行程
+路線（`trip: multi`）不生效，那種要直接改 `legs`。
+
+**`/rm` 移不掉最後一個目的地** 是故意的：移光就沒東西可追了。真的要換成
+別的地方，用 `/to` 一次整個換掉——這正是 OOL 完全沒有直飛航班、改追 BNE
+時用的指令：
+
+```
+xK9mQ2 /stops 0 @台北-黃金海岸
+xK9mQ2 /to BNE @台北-黃金海岸
+xK9mQ2 /rename 台北-布里斯本 @台北-黃金海岸
+```
+
+三則指令分別是「轉機上限清成直飛」「目的地換成 BNE」「路線改名」，
+跑完之後往後的指令就可以用新名稱 `@台北-布里斯本` 指定了。
 
 執行結果會回到**通知用的那個 topic**（不是指令頻道）：指令進、回覆出，兩個方向分開。
 
@@ -364,31 +382,28 @@ KiwiProvider(allow_self_transfer=True, allow_diff_airport_connection=False)
 
 ---
 
-## 已知問題
+## 已知問題與取捨
 
-**fast-flights 查不到台北→黃金海岸(OOL)，改由 Kiwi 接手。**
+**黃金海岸(OOL) 現在沒被追蹤，因為它完全沒有直飛航班。**
 
-2026-09-17 實跑兩次，OOL 的 15 組查詢全部失敗，`max_stops` 從 2 放寬到 3 也沒用：
+2026-09-17 第一次實跑，fast-flights 對 OOL 整批查詢失敗（`TypeError: 'NoneType'
+object is not subscriptable`），改用 Kiwi 查證後發現航班確實存在，只是 fast-flights
+的解析在這條航線上壞掉——這部分已經修好，Kiwi 現在是 fast-flights 失敗時的備援
+（見上面〈資料來源〉）。
 
-```
-TPE>OOL>TPE ...: fast-flights 查詢失敗: TypeError: 'NoneType' object is not subscriptable
-```
+但後來把設定改成**只要直飛**之後，用 Kiwi 直接查 `max_sector_stopovers=0`，
+**TPE→OOL 整段 2027-06-05~06-16 查到 0 筆結果**——不是解析問題，是這條航線
+本來就沒有直飛。所以目前 `routes.yaml` 追的是布里斯本(BNE) 取代黃金海岸：
+天天有 China Airlines / EVA Air 直飛，開車約一小時可到黃金海岸。想要 OOL
+也一起比、接受轉機的話，`routes.yaml` 檔尾有寫法備忘，或用 `/stops` `/to`
+從 ntfy 加回來。
 
-同一時間雪梨 14/15 組正常，所以不是網路或設定的問題。
-而用 Kiwi 查同一條航線同一組日期，**找得到 15 筆結果**——證明航班確實存在，
-是 fast-flights 的解析在這條航線上壞掉。
-
-處理方式：把 Kiwi 加進 `providers` 當備援。它排在 fast-flights 後面，
-所以只有失敗的查詢會落到它手上，雪梨完全不受影響。
-
-還有一個備案沒用上：改追**布里斯本 BNE**（開車約一小時到黃金海岸，班次多得多）：
-
-```yaml
-  - name: 台北-布里斯本
-    group: 台北-澳洲東岸
-    from: TPE
-    to: BNE
-```
+**只要直飛（`max_stops: 0`）會讓某些航線更常查無資料**，這是取捨後的結果，
+不是 bug：轉機選項通常比直飛多，關掉轉機等於縮小候選池。多段行程那條
+（雪梨進、布里斯本出）目前回程日期 `2027-06-16` 查證當下沒查到直飛班次，
+但前後幾天幾乎每天都有——那個日期是 2026-09 查的，離出發還有 9 個月，
+航空公司很可能還沒把整個班表排出來，不一定是真的停飛，`routes.yaml` 裡
+已經寫了這個保留意見。
 
 > ⚠️ 注意：一整個目的地全數失敗時，Actions 仍然是綠的，
 > 因為只要還有別的路線查到價格就不算整輪失敗。

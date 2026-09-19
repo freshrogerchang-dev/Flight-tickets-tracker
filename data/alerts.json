@@ -1,8 +1,13 @@
 {
   "KHH>OKA>KHH|2027-01-30|2027-02-04|TWD": {
     "currency": "TWD",
-    "price": 11515,
-    "sent_at": "2026-09-18T10:16:17+00:00"
+    "price": 11548,
+    "sent_at": "2026-09-19T12:03:14+00:00"
+  },
+  "TPE>BNE / SYD>TPE|2027-06-05||TWD": {
+    "currency": "TWD",
+    "price": 35978,
+    "sent_at": "2026-09-19T12:03:14+00:00"
   },
   "TPE>SYD>TPE|2026-12-18|2026-12-30|TWD": {
     "currency": "TWD",

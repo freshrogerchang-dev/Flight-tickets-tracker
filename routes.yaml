@@ -37,7 +37,7 @@ routes:
     windows:
       - nights: 11                                # ← 改成你要待幾晚
         depart: 2027-06-05
-    alert_below: 30000
+    alert_below: 20000
     alert_drop_pct: 12
 
   # ── 布里斯本：原本追黃金海岸(OOL)，但 OOL 完全沒有直飛航班（Kiwi 查證：

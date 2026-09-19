@@ -12,7 +12,7 @@ from datetime import date
 
 import pytest
 
-from tracker.models import Leg, SearchOptions, SearchSpec
+from tracker.models import Leg, Quote, SearchOptions, SearchSpec
 from tracker.providers import ProviderError, get_provider
 from tracker.providers.fast_flights_provider import FastFlightsProvider
 
@@ -192,6 +192,105 @@ def test_booking_url_is_a_google_flights_link(provider):
 
     assert url.startswith("https://www.google.com/travel/flights")
     assert "curr=TWD" in url
+
+
+# ---------------------------------------------------------------- multi-city split
+
+
+def multi_spec(**overrides) -> SearchSpec:
+    defaults = dict(
+        legs=(Leg("TPE", "SYD", date(2027, 6, 5)), Leg("BNE", "TPE", date(2027, 6, 16))),
+        trip="multi",
+        options=SearchOptions(currency="TWD"),
+        route_name="布里斯本進雪梨出",
+    )
+    defaults.update(overrides)
+    return SearchSpec(**defaults)
+
+
+def _leg_quote(leg: Leg, price: int, url: str) -> Quote:
+    return Quote(
+        route_name="布里斯本進雪梨出",
+        group="",
+        itinerary=f"{leg.origin}>{leg.destination}",
+        origin=leg.origin,
+        destination=leg.destination,
+        depart=leg.date,
+        ret=None,
+        price=price,
+        currency="TWD",
+        airlines=("China Airlines",),
+        stops=0,
+        duration_minutes=300,
+        url=url,
+    )
+
+
+def test_search_routes_a_multi_city_spec_to_the_per_leg_split(provider, monkeypatch):
+    """fast-flights' own multi-city query mode crashes parsing the response
+    (real observed failure: IndexError) -- search() must never reach it."""
+    seen = []
+    monkeypatch.setattr(
+        provider, "_search_multi_as_separate_legs", lambda spec: seen.append(spec) or ["sentinel"]
+    )
+
+    result = provider.search(multi_spec())
+
+    assert result == ["sentinel"]
+    assert len(seen) == 1
+
+
+def test_multi_city_splits_into_one_way_legs_and_sums_the_price(provider, monkeypatch):
+    def fake_search(spec):
+        leg = spec.legs[0]
+        assert spec.trip == "oneway", "each leg must be queried as its own one-way search"
+        if leg.origin == "TPE":
+            return [_leg_quote(leg, 10000, "https://example.invalid/leg1")]
+        return [_leg_quote(leg, 8000, "https://example.invalid/leg2")]
+
+    monkeypatch.setattr(provider, "search", fake_search)
+
+    quotes = provider._search_multi_as_separate_legs(multi_spec())
+
+    assert len(quotes) == 1
+    quote = quotes[0]
+    assert quote.price == 18000, "sum of both legs' cheapest one-way fare"
+    assert quote.origin == "TPE" and quote.destination == "SYD", "the spec's overall origin/destination"
+    assert quote.depart == date(2027, 6, 5), "the first leg's date"
+    assert quote.ret is None, "multi-city has no single return date"
+    assert quote.itinerary == multi_spec().itinerary
+    assert quote.stops == 0
+    assert quote.duration_minutes == 600
+    assert "https://example.invalid/leg1" in quote.url
+    assert "https://example.invalid/leg2" in quote.url
+
+
+def test_multi_city_split_collects_airlines_from_every_leg(provider, monkeypatch):
+    def fake_search(spec):
+        leg = spec.legs[0]
+        airline = "China Airlines" if leg.origin == "TPE" else "EVA Air"
+        quote = _leg_quote(leg, 10000, "")
+        quote.airlines = (airline,)
+        return [quote]
+
+    monkeypatch.setattr(provider, "search", fake_search)
+
+    quote = provider._search_multi_as_separate_legs(multi_spec())[0]
+
+    assert quote.airlines == ("China Airlines", "EVA Air")
+
+
+def test_multi_city_split_propagates_a_failing_legs_error(provider, monkeypatch):
+    def fake_search(spec):
+        leg = spec.legs[0]
+        if leg.origin == "BNE":
+            raise ProviderError("fast-flights 查詢失敗: TypeError: boom")
+        return [_leg_quote(leg, 10000, "")]
+
+    monkeypatch.setattr(provider, "search", fake_search)
+
+    with pytest.raises(ProviderError, match="BNE>TPE 這段查詢失敗"):
+        provider._search_multi_as_separate_legs(multi_spec())
 
 
 def test_unknown_provider_name_is_rejected():

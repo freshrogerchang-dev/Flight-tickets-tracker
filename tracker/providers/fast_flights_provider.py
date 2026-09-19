@@ -66,6 +66,9 @@ class FastFlightsProvider:
             raise ProviderError(f"無法組出 Google Flights 連結: {exc}") from exc
 
     def search(self, spec: SearchSpec) -> list[Quote]:
+        if spec.trip == "multi" and len(spec.legs) > 1:
+            return self._search_multi_as_separate_legs(spec)
+
         ff, query = self._build_query(spec)
 
         try:
@@ -89,6 +92,52 @@ class FastFlightsProvider:
 
         quotes.sort(key=lambda q: q.price)
         return quotes
+
+    def _search_multi_as_separate_legs(self, spec: SearchSpec) -> list[Quote]:
+        """Work around fast-flights' own multi-city query mode, which crashes
+        parsing Google's response for a genuine open-jaw route (observed:
+        ``IndexError: list index out of range`` on TPE>SYD / BNE>TPE) -- a bug
+        inside the unofficial library's handling of that response shape, not
+        something fixable from here.
+
+        Query each leg as its own one-way search instead and add the cheapest
+        fare from each together. This is an approximation, not a real
+        combined-ticket price -- an airline's own multi-city fare can be
+        cheaper than two one-ways stitched together -- but it is real, current
+        data instead of nothing.
+        """
+        leg_quotes: list[Quote] = []
+        for leg in spec.legs:
+            leg_spec = SearchSpec(
+                legs=(leg,),
+                trip="oneway",
+                options=spec.options,
+                route_name=spec.route_name,
+                group=spec.group,
+            )
+            try:
+                leg_quotes.append(self.search(leg_spec)[0])
+            except ProviderError as exc:
+                raise ProviderError(f"多段行程 {leg.origin}>{leg.destination} 這段查詢失敗：{exc}") from exc
+
+        combined = Quote(
+            route_name=spec.route_name,
+            group=spec.group,
+            itinerary=spec.itinerary,
+            origin=spec.origin,
+            destination=spec.destination,
+            depart=spec.depart,
+            ret=spec.ret,
+            price=sum(q.price for q in leg_quotes),
+            currency=spec.options.currency,
+            airlines=tuple(dict.fromkeys(a for q in leg_quotes for a in q.airlines)),
+            stops=sum(q.stops for q in leg_quotes),
+            duration_minutes=sum(q.duration_minutes for q in leg_quotes),
+            url="\n".join(q.url for q in leg_quotes if q.url),
+            source=self.name,
+            fetched_at=datetime.now(timezone.utc),
+        )
+        return [combined]
 
     def _to_quote(self, flight, spec: SearchSpec, url: str, fetched_at: datetime) -> Quote | None:
         price = getattr(flight, "price", None)

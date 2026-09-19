@@ -111,3 +111,13 @@ routes:
       - depart: 2027-01-30
         nights: 5
     alert_below: 16000
+  - name: 布里斯本進雪梨出
+    trip: multi
+    legs:
+      - from: TPE
+        to: BNE
+        depart: 2027-06-05
+      - from: SYD
+        to: TPE
+        depart: 2027-06-16
+    alert_below: 40000

@@ -8,6 +8,7 @@ rewrites the file that decides how many queries get fired at Google.
 from __future__ import annotations
 
 import shutil
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -525,6 +526,69 @@ def test_newroute_reports_the_query_budget(config):
 
     # One route, one fixed departure date, one destination: exactly one query.
     assert "共 32 次查詢" in outcome.message
+
+
+def test_newmulti_creates_a_whole_new_multi_city_route(config):
+    outcome = run(
+        "hunter2 /newmulti 雪梨進布里斯本出 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16 40000", config
+    )
+
+    assert outcome.changed
+    assert "新增多段路線" in outcome.message
+    new_route = next(r for r in load_config(config).routes if r.name == "雪梨進布里斯本出")
+    assert new_route.trip == "multi"
+    assert new_route.legs == (
+        ("TPE", "SYD", date(2027, 6, 5)),
+        ("BNE", "TPE", date(2027, 6, 16)),
+    )
+    assert new_route.alert_below == 40000
+
+
+def test_newmulti_supports_more_than_two_legs(config):
+    run(
+        "hunter2 /newmulti 三段行程 TPE>SYD@2027-06-05 SYD>BNE@2027-06-10 BNE>TPE@2027-06-16",
+        config,
+    )
+
+    new_route = next(r for r in load_config(config).routes if r.name == "三段行程")
+    assert len(new_route.legs) == 3
+
+
+def test_newmulti_without_a_threshold_is_optional(config):
+    run("hunter2 /newmulti 雪梨進布里斯本出 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16", config)
+
+    new_route = next(r for r in load_config(config).routes if r.name == "雪梨進布里斯本出")
+    assert new_route.alert_below is None
+
+
+def test_newmulti_rejects_a_name_already_in_use(config):
+    with pytest.raises(CommandError, match="已經有路線叫"):
+        run(
+            "hunter2 /newmulti 台北-澳洲東岸 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16",
+            config,
+        )
+
+
+def test_newmulti_rejects_a_malformed_leg(config):
+    with pytest.raises(CommandError, match="不像一段行程"):
+        run("hunter2 /newmulti 新路線 TPE-SYD-2027-06-05 BNE>TPE@2027-06-16", config)
+
+
+def test_newmulti_rejects_a_leg_with_a_non_letter_code(config):
+    with pytest.raises(CommandError, match="不像一段行程"):
+        run("hunter2 /newmulti 新路線 台北>SYD@2027-06-05 BNE>TPE@2027-06-16", config)
+
+
+def test_newmulti_requires_at_least_two_legs(config):
+    # Three tokens clears the initial length check, but the trailing number
+    # is popped off as a threshold, leaving only one real leg behind.
+    with pytest.raises(CommandError, match="至少要有兩段"):
+        run("hunter2 /newmulti 新路線 TPE>SYD@2027-06-05 20000", config)
+
+
+def test_newmulti_requires_at_least_a_name_and_two_legs(config):
+    with pytest.raises(CommandError, match="用法"):
+        run("hunter2 /newmulti 新路線", config)
 
 
 def test_delroute_removes_a_route(config):

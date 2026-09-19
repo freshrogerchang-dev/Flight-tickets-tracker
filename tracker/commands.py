@@ -47,7 +47,9 @@ HELP_TEXT = """可用指令：
 /from 機場代碼...           整個換掉出發地，例：/from TPE KHH
 /rename 新名稱              幫這條路線改名，例：/rename 台北-布里斯本
 /newroute 名稱 出發地 目的地 出發日 晚數 [門檻]
-                             新增一整條新路線，例：/newroute 台北-福岡 TPE FUK 2027-06-05 7 20000
+                             新增一整條新路線（來回），例：/newroute 台北-福岡 TPE FUK 2027-06-05 7 20000
+/newmulti 名稱 出發地>目的地@日期 出發地>目的地@日期 ... [門檻]
+                             新增一整條多段行程路線，例：/newmulti 雪梨進布里斯本出 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16
 /delroute 名稱              刪除一整條路線（不能刪到一條都不剩）
 /price 金額                 改通知門檻，例：/price 24000
 /drop 百分比                改跌價通知門檻，例：/drop 12
@@ -59,8 +61,8 @@ HELP_TEXT = """可用指令：
 
 指令要加通關碼，格式：<通關碼> /add BNE
 多條路線時用 @名稱 指定，例：/add BNE @台北-澳洲東岸
-（/to /from /rename 對多段行程路線不生效，那種要直接改 legs）
-（/newroute 只能建立來回行程；單程或多段行程要直接編輯 routes.yaml）"""
+（/to /from /rename 對多段行程路線不生效，那種要直接改 legs，或用 /newmulti 整條重建）
+（/newroute 只能建立來回行程；單程要直接編輯 routes.yaml）"""
 
 
 class CommandError(ValueError):
@@ -372,6 +374,11 @@ def apply(command: Command, config_path: str | Path) -> CommandOutcome:
         budget = _validate_and_write(document, path)
         return CommandOutcome(True, f"{summary}（{budget}）", changed=True)
 
+    if command.verb in ("newmulti", "addmulti"):
+        summary = _add_multi_route(document, command.args)
+        budget = _validate_and_write(document, path)
+        return CommandOutcome(True, f"{summary}（{budget}）", changed=True)
+
     if command.verb in ("delroute", "rmroute"):
         summary = _remove_route(document, command.args)
         budget = _validate_and_write(document, path)
@@ -569,6 +576,68 @@ def _add_route(document, args) -> str:
     routes.append(entry)
 
     label = f"新增路線 [{name}] {origin} → {destination}，{depart} 出發、待 {nights} 晚"
+    if alert_below is not None:
+        label += f"，門檻 {alert_below:,}"
+    return label
+
+
+LEG_TOKEN = re.compile(r"^([A-Za-z]{3})>([A-Za-z]{3})@(\d{4}-\d{2}-\d{2})$")
+
+
+def _parse_leg_token(token: str) -> tuple[str, str, date]:
+    match = LEG_TOKEN.match(token)
+    if not match:
+        raise CommandError(f"{token} 不像一段行程，格式要是 出發地>目的地@日期，例：TPE>SYD@2027-06-05")
+    origin, destination, depart_raw = match.groups()
+    return origin.upper(), destination.upper(), _as_date(depart_raw)
+
+
+def _add_multi_route(document, args) -> str:
+    """Create a whole new multi-city route: several fixed legs, one ticket.
+
+    ``/newroute`` only covers a single from/to pair, so multi-city (a
+    different city for each leg, e.g. fly into Sydney and home from
+    Brisbane) needs its own shape: an ordered list of legs rather than one
+    origin/destination. The ``出發地>目的地@日期`` token packs each leg into
+    one space-separated argument, since a plain positional list can't tell
+    where one leg ends and the next begins.
+    """
+    if len(args) < 3:
+        raise CommandError(
+            "用法：/newmulti 名稱 出發地>目的地@日期 出發地>目的地@日期 ... [門檻金額]，"
+            "至少要有兩段，例：/newmulti 雪梨進布里斯本出 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16"
+        )
+    name, *rest = args
+
+    routes = document.get("routes")
+    if routes is None:
+        raise CommandError("routes.yaml 裡沒有 routes 欄位")
+    if any(str(r.get("name", "")) == name for r in routes):
+        raise CommandError(f"已經有路線叫 {name} 了，用 /delroute 舊的再重建，或直接改 legs")
+
+    leg_tokens = list(rest)
+    alert_below = None
+    if leg_tokens and re.fullmatch(r"\d+", leg_tokens[-1]):
+        alert_below = _as_positive_int(leg_tokens.pop(), "門檻金額")
+
+    if len(leg_tokens) < 2:
+        raise CommandError(
+            "多段行程至少要有兩段，例：/newmulti 名稱 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16"
+        )
+
+    legs = [_parse_leg_token(token) for token in leg_tokens]
+
+    entry = {
+        "name": name,
+        "trip": "multi",
+        "legs": [{"from": o, "to": d, "depart": dt} for o, d, dt in legs],
+    }
+    if alert_below is not None:
+        entry["alert_below"] = alert_below
+    routes.append(entry)
+
+    leg_labels = " → ".join(f"{o}>{d} {dt}" for o, d, dt in legs)
+    label = f"新增多段路線 [{name}] {leg_labels}"
     if alert_below is not None:
         label += f"，門檻 {alert_below:,}"
     return label

@@ -35,8 +35,8 @@ routes:
     to: SYD
     trip: round
     windows:
-      - nights: 11                                # ← 改成你要待幾晚
-        depart: 2027-06-05
+      - nights: 5                                 # ← 改成你要待幾晚
+        depart: 2027-01-30
     alert_below: 30000
     alert_drop_pct: 12
 

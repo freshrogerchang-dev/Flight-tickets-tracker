@@ -200,6 +200,30 @@ class PriceStore:
                 best[name] = row
         return sorted(best.values(), key=lambda r: r["route_name"])
 
+    def route_history(self, route_name: str, *, since: date | None = None) -> list[dict]:
+        """Cheapest price per run for one route, oldest first.
+
+        A run can price several itineraries for one route (a date sweep, a
+        multi-destination compare); collapsing each run to its cheapest quote
+        keeps one point per run for a price-trend chart, instead of a noisy
+        cluster of same-timestamp dots.
+        """
+        cheapest_per_run: dict[str, dict] = {}
+        for row in self.rows():
+            if row.get("route_name") != route_name:
+                continue
+            if since:
+                try:
+                    if date.fromisoformat(row["fetched_at"][:10]) < since:
+                        continue
+                except ValueError:
+                    continue
+            stamp = row["fetched_at"]
+            current = cheapest_per_run.get(stamp)
+            if current is None or int(row["price"]) < int(current["price"]):
+                cheapest_per_run[stamp] = row
+        return [cheapest_per_run[stamp] for stamp in sorted(cheapest_per_run)]
+
     def cheapest_per_pair(self, *, group: str | None = None, since: date | None = None) -> list[dict]:
         """Cheapest row per origin-destination pair, whatever the dates.
 

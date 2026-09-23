@@ -59,6 +59,51 @@ routes:
     assert route.destinations == ("NRT",)
 
 
+def test_paused_defaults_to_false(tmp_path):
+    config = load_config(write(tmp_path, MINIMAL))
+
+    assert config.routes[0].paused is False
+
+
+def test_paused_true_is_parsed(tmp_path):
+    config = load_config(
+        write(
+            tmp_path,
+            """
+routes:
+  - name: 台北-東京
+    from: TPE
+    to: NRT
+    paused: true
+    windows:
+      - depart: 2026-12-20
+        nights: 7
+""",
+        )
+    )
+
+    assert config.routes[0].paused is True
+
+
+def test_paused_true_is_parsed_for_a_multi_city_route(tmp_path):
+    config = load_config(
+        write(
+            tmp_path,
+            """
+routes:
+  - name: 進出不同城市
+    trip: multi
+    paused: true
+    legs:
+      - {from: TPE, to: SYD, depart: 2027-06-05}
+      - {from: BNE, to: TPE, depart: 2027-06-16}
+""",
+        )
+    )
+
+    assert config.routes[0].paused is True
+
+
 def test_depart_range_expands_inclusively(tmp_path):
     config = load_config(
         write(

@@ -227,6 +227,55 @@ def test_top_n_per_route_respects_since(store, now):
     assert [int(r["price"]) for r in grouped[0][1]] == [8000]
 
 
+# ---------------------------------------------------------------- route_history (for /chart)
+
+
+def test_route_history_collapses_each_run_to_its_cheapest_price(store, now):
+    store.append(
+        [
+            make_quote(9000, route_name="日本", fetched_at=now, itinerary="TPE>NRT>TPE"),
+            make_quote(7000, route_name="日本", fetched_at=now, itinerary="TPE>KIX>TPE", destination="KIX"),
+        ]
+    )
+    store.append([make_quote(8500, route_name="日本", fetched_at=now + timedelta(days=1))])
+
+    rows = store.route_history("日本")
+
+    assert [int(r["price"]) for r in rows] == [7000, 8500], "one point per run, cheapest of that run, oldest first"
+
+
+def test_route_history_only_includes_the_named_route(store, now):
+    store.append(
+        [
+            make_quote(9000, route_name="日本", fetched_at=now),
+            make_quote(20000, route_name="澳洲", fetched_at=now, itinerary="TPE>SYD>TPE", destination="SYD"),
+        ]
+    )
+
+    rows = store.route_history("日本")
+
+    assert len(rows) == 1
+    assert rows[0]["route_name"] == "日本"
+
+
+def test_route_history_respects_since(store, now):
+    store.append(
+        [
+            make_quote(9000, route_name="日本", fetched_at=now - timedelta(days=100)),
+            make_quote(8000, route_name="日本", fetched_at=now - timedelta(days=1)),
+        ]
+    )
+
+    rows = store.route_history("日本", since=(now - timedelta(days=30)).date())
+
+    assert len(rows) == 1
+    assert int(rows[0]["price"]) == 8000
+
+
+def test_route_history_on_a_route_with_no_data_is_empty(store):
+    assert store.route_history("沒有紀錄") == []
+
+
 # ---------------------------------------------------------------- evaluate
 
 

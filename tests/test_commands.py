@@ -591,6 +591,114 @@ def test_newmulti_requires_at_least_a_name_and_two_legs(config):
         run("hunter2 /newmulti 新路線", config)
 
 
+def test_newoneway_creates_a_whole_new_oneway_route(config):
+    outcome = run("hunter2 /newoneway 台北-福岡 TPE FUK 2027-06-05 8000", config)
+
+    assert outcome.changed
+    assert "新增單程路線" in outcome.message
+    new_route = next(r for r in load_config(config).routes if r.name == "台北-福岡")
+    assert new_route.origins == ("TPE",)
+    assert new_route.destinations == ("FUK",)
+    assert new_route.trip == "oneway"
+    assert new_route.windows[0].nights is None
+    assert new_route.windows[0].departs[0].isoformat() == "2027-06-05"
+    assert new_route.alert_below == 8000
+
+
+def test_newoneway_without_a_threshold_is_optional(config):
+    run("hunter2 /newoneway 台北-福岡 TPE FUK 2027-06-05", config)
+
+    new_route = next(r for r in load_config(config).routes if r.name == "台北-福岡")
+    assert new_route.alert_below is None
+
+
+def test_newoneway_rejects_a_name_already_in_use(config):
+    with pytest.raises(CommandError, match="已經有路線叫"):
+        run("hunter2 /newoneway 台北-澳洲東岸 TPE FUK 2027-06-05", config)
+
+
+def test_newoneway_rejects_bad_airport_codes(config):
+    with pytest.raises(CommandError, match="不像機場代碼"):
+        run("hunter2 /newoneway 新路線 台北 FUK 2027-06-05", config)
+
+
+def test_newoneway_rejects_wrong_argument_counts(config):
+    for args in ("台北-福岡 TPE FUK", "台北-福岡 TPE FUK 2027-06-05 8000 extra"):
+        with pytest.raises(CommandError, match="用法"):
+            run(f"hunter2 /newoneway {args}", config)
+
+
+def test_pause_marks_the_route_as_paused(config):
+    outcome = run("hunter2 /pause @台北-澳洲東岸", config)
+
+    assert outcome.changed
+    assert "已暫停" in outcome.message
+    route = next(r for r in load_config(config).routes if r.name == "台北-澳洲東岸")
+    assert route.paused is True
+
+
+def test_pause_refuses_a_route_already_paused(config):
+    run("hunter2 /pause @台北-澳洲東岸", config)
+    with pytest.raises(CommandError, match="已經暫停了"):
+        run("hunter2 /pause @台北-澳洲東岸", config)
+
+
+def test_pause_rejects_extra_arguments(config):
+    with pytest.raises(CommandError, match="用法"):
+        run("hunter2 /pause 多餘的參數 @台北-澳洲東岸", config)
+
+
+def test_resume_clears_the_paused_flag(config):
+    run("hunter2 /pause @台北-澳洲東岸", config)
+    outcome = run("hunter2 /resume @台北-澳洲東岸", config)
+
+    assert outcome.changed
+    assert "已恢復" in outcome.message
+    route = next(r for r in load_config(config).routes if r.name == "台北-澳洲東岸")
+    assert route.paused is False
+
+
+def test_resume_refuses_a_route_that_is_not_paused(config):
+    with pytest.raises(CommandError, match="本來就沒有暫停"):
+        run("hunter2 /resume @台北-澳洲東岸", config)
+
+
+def test_a_paused_route_expands_to_no_queries(config):
+    run("hunter2 /pause @台北-澳洲東岸", config)
+
+    specs = expand_all(load_config(config))
+    # Only the still-active multi-city route is left.
+    assert {s.route_name for s in specs} == {"雪梨進黃金海岸出"}
+
+
+def test_routes_shows_a_paused_tag(config):
+    run("hunter2 /pause @台北-澳洲東岸", config)
+
+    outcome = run("hunter2 /routes", config)
+    assert "[台北-澳洲東岸]（已暫停）" in outcome.message
+    assert "[雪梨進黃金海岸出] 多段" in outcome.message
+
+
+def test_chart_resolves_to_the_default_route_and_does_not_change_config(config):
+    before = config.read_text(encoding="utf-8")
+    outcome = run("hunter2 /chart", config)
+
+    assert not outcome.changed
+    assert outcome.chart_target == "台北-澳洲東岸"
+    assert config.read_text(encoding="utf-8") == before, "/chart only reads, it never edits routes.yaml"
+
+
+def test_chart_can_target_a_multi_city_route_by_name(config):
+    outcome = run("hunter2 /chart @雪梨進黃金海岸出", config)
+
+    assert outcome.chart_target == "雪梨進黃金海岸出"
+
+
+def test_chart_rejects_extra_arguments(config):
+    with pytest.raises(CommandError, match="用法"):
+        run("hunter2 /chart 多餘的參數", config)
+
+
 def test_delroute_removes_a_route(config):
     outcome = run("hunter2 /delroute 雪梨進黃金海岸出", config)
 

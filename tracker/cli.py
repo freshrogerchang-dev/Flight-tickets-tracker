@@ -5,13 +5,15 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from .alerts import AlertState
 from .config import Config, ConfigError, RouteConfig, Window, load_config
 from .expand import TooManyQueries, drop_past, expand_all, expand_route, summarise
 from .models import SearchOptions, SearchSpec
-from .notify import available_notifiers, deliver, format_alerts
+from .notify import NotifyError, available_notifiers, deliver, format_alerts
 from .providers import ProviderError, get_provider
 from .runner import run as run_searches
 from .store import PriceStore
@@ -255,6 +257,101 @@ def _command_source():
     return None, None, secret
 
 
+def _status_message(config_path: str, prices_path: str) -> str:
+    """Route settings + the latest price seen per route.
+
+    Shared body of ``/status`` and ``cmd_digest``: "is this thing still alive
+    and what has it seen lately" is the same question either way, just asked
+    on demand versus on a schedule.
+    """
+    from .commands import describe_routes
+
+    lines = []
+    try:
+        lines.append(describe_routes(load_config(config_path)))
+    except ConfigError as exc:
+        lines.append(f"讀不到設定檔：{exc}")
+
+    latest = PriceStore(prices_path).latest_per_route()
+    if latest:
+        lines.append("最新查到：")
+        for row in latest:
+            when = row["fetched_at"][:16].replace("T", " ")
+            lines.append(
+                f"  [{row['route_name']}] {row['itinerary']} {int(row['price']):,} {row['currency']}"
+                f"（{when} UTC）"
+            )
+    else:
+        lines.append("還沒有任何查價紀錄。")
+    return "\n".join(lines)
+
+
+def cmd_digest(args: argparse.Namespace) -> int:
+    """Send a status summary to every configured channel, whether or not anything's cheap.
+
+    ``run`` only pushes a notification when an alert fires or the whole run
+    fails outright -- a route that's alive, querying fine, and just never
+    finding anything under threshold looks from the phone exactly like one
+    that quietly died months ago. This is the periodic "still here, here's
+    what I've seen lately" proof, meant to run on its own schedule
+    (see ``.github/workflows/digest.yml``) independent of the daily tracking run.
+    """
+    body = _status_message(args.config, args.prices)
+
+    notifiers = available_notifiers()
+    if not notifiers:
+        print("沒有設定任何通知管道，摘要沒地方送，只印在這裡：", file=sys.stderr)
+        print(body)
+        return 1
+
+    print(f"偵測到管道：{', '.join(n.name for n in notifiers)}", file=sys.stderr)
+    subject = "📋 機票追蹤器存活摘要"
+    failed = False
+    for delivery in deliver(notifiers, subject, body):
+        mark = "✓" if delivery.ok else "✗"
+        print(f"  {mark} {delivery.channel} {delivery.detail}".rstrip(), file=sys.stderr)
+        failed |= not delivery.ok
+    return 1 if failed else 0
+
+
+def _send_charts(route_names: list[str], prices_path: str) -> list[str]:
+    """Render and Telegram-send a price-trend PNG for each ``/chart`` request.
+
+    Sent as its own photo message per route rather than through the generic
+    text ``deliver()`` fan-out: a chart's whole point is being a picture, and
+    Telegram's ``sendPhoto`` is the only channel wired up for that here. A
+    route requested without Telegram configured gets a text explanation
+    instead of the chart silently going nowhere.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not (token and chat_id):
+        return [
+            f"[{name}] /chart 目前只能用 Telegram 傳圖，請設定 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID"
+            for name in route_names
+        ]
+
+    from .chart import ChartError, render_price_trend
+    from .notify.telegram import send_photo
+
+    store = PriceStore(prices_path)
+    notes = []
+    with tempfile.TemporaryDirectory() as tmp:
+        chart_path = Path(tmp) / "chart.png"
+        for name in route_names:
+            rows = store.route_history(name, since=date.today() - timedelta(days=90))
+            try:
+                render_price_trend(rows, route_name=name, out_path=chart_path)
+            except ChartError as exc:
+                notes.append(f"[{name}] {exc}")
+                continue
+            try:
+                send_photo(token, chat_id, chart_path, caption=f"{name} 近 90 天價格趨勢")
+            except NotifyError as exc:
+                notes.append(f"[{name}] 傳圖失敗：{exc}")
+    return notes
+
+
 def cmd_commands(args: argparse.Namespace) -> int:
     """Apply one webhook-delivered message, or poll the configured command channel.
 
@@ -307,6 +404,7 @@ def cmd_commands(args: argparse.Namespace) -> int:
         return 0
 
     replies = []
+    chart_targets = []
     run_now = report_now = status_now = reset_now = False
     for item in handled:
         print(f"/{item.command.verb} → {item.outcome.message or '(執行)'}", file=sys.stderr)
@@ -316,6 +414,8 @@ def cmd_commands(args: argparse.Namespace) -> int:
         report_now |= item.outcome.report_now
         status_now |= item.outcome.status_now
         reset_now |= item.outcome.reset_now
+        if item.outcome.chart_target:
+            chart_targets.append(item.outcome.chart_target)
 
     if report_now:
         store = PriceStore(args.prices)
@@ -337,30 +437,16 @@ def cmd_commands(args: argparse.Namespace) -> int:
             replies.append("還沒有價格紀錄。")
 
     if status_now:
-        lines = []
-        try:
-            lines.append(describe_routes(load_config(args.config)))
-        except ConfigError as exc:
-            lines.append(f"讀不到設定檔：{exc}")
-
-        latest = PriceStore(args.prices).latest_per_route()
-        if latest:
-            lines.append("最新查到：")
-            for row in latest:
-                when = row["fetched_at"][:16].replace("T", " ")
-                lines.append(
-                    f"  [{row['route_name']}] {row['itinerary']} {int(row['price']):,} {row['currency']}"
-                    f"（{when} UTC）"
-                )
-        else:
-            lines.append("還沒有任何查價紀錄。")
-        replies.append("\n".join(lines))
+        replies.append(_status_message(args.config, args.prices))
 
     if reset_now:
         state = AlertState(args.state)
         count = state.clear()
         state.save()
         replies.append(f"已清空 {count} 筆已通知紀錄，之前通知過的低價下次符合門檻會再通知一次。")
+
+    if chart_targets:
+        replies.extend(_send_charts(chart_targets, args.prices))
 
     # Sent through every configured notify channel, not just the one the
     # command arrived on -- someone running LINE + Telegram together should
@@ -378,6 +464,21 @@ def cmd_commands(args: argparse.Namespace) -> int:
                 handle.write("run_now=true\n")
         print("已要求立刻查一輪", file=sys.stderr)
 
+    return 0
+
+
+def cmd_chart(args: argparse.Namespace) -> int:
+    """Save one route's price-trend PNG to disk, for local testing without Telegram."""
+    from .chart import ChartError, render_price_trend
+
+    store = PriceStore(args.prices)
+    rows = store.route_history(args.route, since=date.today() - timedelta(days=args.days))
+    try:
+        path = render_price_trend(rows, route_name=args.route, out_path=args.out)
+    except ChartError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"已存成 {path}", file=sys.stderr)
     return 0
 
 
@@ -496,6 +597,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_commands.add_argument("--message-id", default=None, help="搭配 --message，該訊息的 id（僅供記錄）")
     p_commands.set_defaults(func=cmd_commands)
+
+    # chart
+    p_chart = sub.add_parser("chart", help="把某條路線的價格歷史畫成 PNG 趨勢圖（本機測試用，不經 Telegram）")
+    p_chart.add_argument("route", help="路線名稱，跟 routes.yaml 裡的 name 一樣")
+    p_chart.add_argument("--prices", default=DEFAULT_PRICES)
+    p_chart.add_argument("--days", type=int, default=90)
+    p_chart.add_argument("--out", default="chart.png")
+    p_chart.set_defaults(func=cmd_chart)
+
+    # digest
+    p_digest = sub.add_parser(
+        "digest", help="送一則存活摘要（設定＋每條路線最新價格）到所有通知管道，不等有便宜票才發"
+    )
+    p_digest.add_argument("--config", default=DEFAULT_CONFIG)
+    p_digest.add_argument("--prices", default=DEFAULT_PRICES)
+    p_digest.set_defaults(func=cmd_digest)
 
     # test-notify
     p_notify = sub.add_parser("test-notify", help="對所有已設定的通知管道送一則測試訊息")

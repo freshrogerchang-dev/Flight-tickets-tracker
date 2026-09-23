@@ -41,6 +41,9 @@ def expand_route(route: RouteConfig) -> list[SearchSpec]:
     departure dates -- so a dry run and the real run visit searches in the same
     order, and tests can assert on the list directly.
     """
+    if route.paused:
+        return []
+
     group = route.group
 
     if route.trip == "multi":

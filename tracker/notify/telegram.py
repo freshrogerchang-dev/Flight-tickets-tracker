@@ -13,6 +13,8 @@ group chat added as the bot's peer).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import requests
 
 from . import NotifyError
@@ -55,6 +57,36 @@ class TelegramNotifier:
             # Telegram's error detail (bad chat id, bot blocked, ...) is in the
             # body; the status code alone is not enough to debug from.
             raise NotifyError(f"Telegram 發送失敗 (HTTP {response.status_code}): {response.text[:300]}")
+
+
+#: Telegram truncates or rejects a longer photo caption.
+MAX_CAPTION_LENGTH = 1024
+
+
+def send_photo(token: str, chat_id: str, photo_path: str | Path, *, caption: str = "") -> None:
+    """Send one local image file as a Telegram photo message.
+
+    Used by ``/chart``: a price-trend PNG is more useful as an actual picture
+    than as a link, and ``sendPhoto`` is the one Bot API call that needs a
+    multipart body instead of the plain JSON every other notifier here sends.
+    """
+    token = token.strip()
+    if len(caption) > MAX_CAPTION_LENGTH:
+        caption = caption[: MAX_CAPTION_LENGTH - 1] + "…"
+
+    try:
+        with open(photo_path, "rb") as handle:
+            response = requests.post(
+                f"{API_ROOT}/bot{token}/sendPhoto",
+                data={"chat_id": chat_id, "caption": caption},
+                files={"photo": handle},
+                timeout=SEND_TIMEOUT_SECONDS,
+            )
+    except (requests.RequestException, OSError) as exc:
+        raise NotifyError(f"Telegram 傳圖失敗: {exc}") from exc
+
+    if response.status_code != 200:
+        raise NotifyError(f"Telegram 傳圖失敗 (HTTP {response.status_code}): {response.text[:300]}")
 
 
 def poll_updates(token: str, *, since: str = "") -> list[dict]:

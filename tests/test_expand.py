@@ -130,6 +130,37 @@ def test_multi_city_keeps_legs_verbatim():
     assert specs[0].itinerary == "TPE>NRT / KIX>TPE"
 
 
+def test_paused_route_expands_to_no_searches():
+    specs = expand_route(simple_route(paused=True))
+
+    assert specs == []
+
+
+def test_paused_multi_city_route_expands_to_no_searches():
+    route = RouteConfig(
+        name="東京進大阪出",
+        trip="multi",
+        legs=(
+            ("TPE", "NRT", date(2027, 1, 10)),
+            ("KIX", "TPE", date(2027, 1, 17)),
+        ),
+        options=SearchOptions(),
+        paused=True,
+    )
+
+    assert expand_route(route) == []
+
+
+def test_expand_all_skips_a_paused_route_but_keeps_the_rest():
+    config = make_config(
+        routes=(simple_route(name="活著", paused=False), simple_route(name="暫停中", paused=True))
+    )
+
+    specs = expand_all(config)
+
+    assert {s.route_name for s in specs} == {"活著"}
+
+
 def test_expand_all_raises_when_over_budget_and_names_the_worst_route():
     big = simple_route(
         name="爆量路線",

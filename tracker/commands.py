@@ -51,9 +51,14 @@ HELP_TEXT = """可用指令：
 /rename 新名稱              幫這條路線改名，例：/rename 台北-布里斯本
 /newroute 名稱 出發地 目的地 出發日 晚數 [門檻]
                              新增一整條新路線（來回），例：/newroute 台北-福岡 TPE FUK 2027-06-05 7 20000
+/newoneway 名稱 出發地 目的地 出發日 [門檻]
+                             新增一整條單程路線，例：/newoneway 台北-福岡 TPE FUK 2027-06-05 8000
 /newmulti 名稱 出發地>目的地@日期 出發地>目的地@日期 ... [門檻]
                              新增一整條多段行程路線，例：/newmulti 雪梨進布里斯本出 TPE>SYD@2027-06-05 BNE>TPE@2027-06-16
 /delroute 名稱              刪除一整條路線（不能刪到一條都不剩）
+/pause [@路線名稱]          暫停這條路線（不再查價、不再通知），設定還在
+/resume [@路線名稱]         恢復暫停中的路線
+/chart [@路線名稱]          畫近 90 天價格趨勢圖，用 Telegram 傳一張圖回來
 /price 金額                 改通知門檻，例：/price 24000
 /drop 百分比                改跌價通知門檻，例：/drop 12
 /stops 轉機次數上限         例：/stops 0（只要直飛）
@@ -64,8 +69,7 @@ HELP_TEXT = """可用指令：
 
 指令要加通關碼，格式：<通關碼> /add BNE
 多條路線時用 @名稱 指定，例：/add BNE @台北-澳洲東岸
-（/to /from /rename 對多段行程路線不生效，那種要直接改 legs，或用 /newmulti 整條重建）
-（/newroute 只能建立來回行程；單程要直接編輯 routes.yaml）"""
+（/to /from /rename 對多段行程路線不生效，那種要直接改 legs，或用 /newmulti 整條重建）"""
 
 
 class CommandError(ValueError):
@@ -95,6 +99,10 @@ class CommandOutcome:
     report_now: bool = False
     status_now: bool = False
     reset_now: bool = False
+    #: Set by ``/chart`` to the resolved route name; the CLI renders and sends
+    #: the PNG since that needs price history and Telegram, neither available
+    #: here (this module only ever touches routes.yaml).
+    chart_target: str | None = None
 
 
 class Cursor:
@@ -281,9 +289,10 @@ def _pick_route(document, target: str | None):
 def describe_routes(config) -> str:
     lines = []
     for route in config.routes:
+        paused_tag = "（已暫停）" if route.paused else ""
         if route.trip == "multi":
             legs = " → ".join(f"{o}>{d} {dt}" for o, d, dt in route.legs)
-            lines.append(f"[{route.name}] 多段：{legs}")
+            lines.append(f"[{route.name}]{paused_tag} 多段：{legs}")
             continue
 
         origins = ",".join(route.origins)
@@ -300,7 +309,7 @@ def describe_routes(config) -> str:
             thresholds.append(f"跌 {route.alert_drop_pct:g}%")
 
         lines.append(
-            f"[{route.name}] {origins} → {destinations}\n"
+            f"[{route.name}]{paused_tag} {origins} → {destinations}\n"
             f"  {'；'.join(spans)}\n"
             f"  通知：{' 或 '.join(thresholds) or '未設定'}"
             f"  轉機上限：{route.options.max_stops if route.options.max_stops is not None else '不限'}"
@@ -382,6 +391,11 @@ def apply(command: Command, config_path: str | Path) -> CommandOutcome:
         budget = _validate_and_write(document, path)
         return CommandOutcome(True, f"{summary}（{budget}）", changed=True)
 
+    if command.verb in ("newoneway", "addoneway"):
+        summary = _add_oneway_route(document, command.args)
+        budget = _validate_and_write(document, path)
+        return CommandOutcome(True, f"{summary}（{budget}）", changed=True)
+
     if command.verb in ("delroute", "rmroute"):
         summary = _remove_route(document, command.args)
         budget = _validate_and_write(document, path)
@@ -389,6 +403,11 @@ def apply(command: Command, config_path: str | Path) -> CommandOutcome:
 
     route = _pick_route(document, command.target)
     name = str(route.get("name", "?"))
+
+    if command.verb == "chart":
+        if command.args:
+            raise CommandError("用法：/chart [@路線名稱]，不需要其他參數")
+        return CommandOutcome(True, "", chart_target=name)
 
     if command.verb == "rename":
         # Needs every route's name to reject a collision, which a per-route
@@ -584,6 +603,52 @@ def _add_route(document, args) -> str:
     return label
 
 
+def _add_oneway_route(document, args) -> str:
+    """Create a whole new one-way route, appended to ``routes``.
+
+    ``/newroute`` is round-trip only, so a plain A→B with no return (the
+    routes.yaml comment used to say "單程要直接編輯 routes.yaml") needed its
+    own command -- same shape as ``_add_route`` minus ``nights``.
+    """
+    if len(args) not in (4, 5):
+        raise CommandError(
+            "用法：/newoneway 名稱 出發地 目的地 出發日 [門檻金額]，"
+            "例：/newoneway 台北-福岡 TPE FUK 2027-06-05 8000"
+        )
+    name, origin_raw, destination_raw, depart_raw, *rest = args
+
+    routes = document.get("routes")
+    if routes is None:
+        raise CommandError("routes.yaml 裡沒有 routes 欄位")
+    if any(str(r.get("name", "")) == name for r in routes):
+        raise CommandError(f"已經有路線叫 {name} 了，用 /scan /to 之類的指令去改它，或先 /delroute 舊的")
+
+    origin, destination = origin_raw.upper(), destination_raw.upper()
+    if not AIRPORT_CODE.match(origin):
+        raise CommandError(f"{origin_raw} 不像機場代碼（要三個英文字母，例如 TPE）")
+    if not AIRPORT_CODE.match(destination):
+        raise CommandError(f"{destination_raw} 不像機場代碼（要三個英文字母，例如 FUK）")
+
+    depart = _as_date(depart_raw)
+    alert_below = _as_positive_int(rest[0], "門檻金額") if rest else None
+
+    entry = {
+        "name": name,
+        "from": origin,
+        "to": destination,
+        "trip": "oneway",
+        "windows": [{"depart": depart}],
+    }
+    if alert_below is not None:
+        entry["alert_below"] = alert_below
+    routes.append(entry)
+
+    label = f"新增單程路線 [{name}] {origin} → {destination}，{depart} 出發"
+    if alert_below is not None:
+        label += f"，門檻 {alert_below:,}"
+    return label
+
+
 LEG_TOKEN = re.compile(r"^([A-Za-z]{3})>([A-Za-z]{3})@(\d{4}-\d{2}-\d{2})$")
 
 
@@ -697,6 +762,24 @@ def _edit_stops(route, args) -> str:
     return f"轉機次數上限改為 {stops}"
 
 
+def _edit_pause(route, args) -> str:
+    if args:
+        raise CommandError("用法：/pause，不需要參數")
+    if route.get("paused"):
+        raise CommandError("這條路線已經暫停了")
+    route["paused"] = True
+    return "已暫停這條路線（不會再查價、不會觸發通知），/resume 可以恢復"
+
+
+def _edit_resume(route, args) -> str:
+    if args:
+        raise CommandError("用法：/resume，不需要參數")
+    if not route.get("paused"):
+        raise CommandError("這條路線本來就沒有暫停")
+    del route["paused"]
+    return "已恢復這條路線的查價"
+
+
 _EDITS = {
     "scan": _edit_scan,
     "time": _edit_scan,  # alias: easier to remember than "scan" for "change the date"
@@ -711,4 +794,6 @@ _EDITS = {
     "below": _edit_price,
     "drop": _edit_drop,
     "stops": _edit_stops,
+    "pause": _edit_pause,
+    "resume": _edit_resume,
 }

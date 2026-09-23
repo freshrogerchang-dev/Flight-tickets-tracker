@@ -55,6 +55,10 @@ class RouteConfig:
     alert_below: int | None = None
     alert_drop_pct: float | None = None
     options: SearchOptions = field(default_factory=SearchOptions)
+    #: A paused route is skipped by expand_route entirely -- no queries burned,
+    #: no alerts possible -- while staying in routes.yaml so /resume can bring
+    #: it back without retyping the whole thing.
+    paused: bool = False
 
     def __post_init__(self) -> None:
         # Resolved here rather than in the YAML parser so a RouteConfig built
@@ -210,6 +214,8 @@ def _parse_route(raw: Any, index: int, defaults: SearchOptions, currency: str) -
     if alert_drop_pct is not None and (not isinstance(alert_drop_pct, (int, float)) or not 0 < alert_drop_pct < 100):
         raise ConfigError(f"route {name!r}: alert_drop_pct must be between 0 and 100")
 
+    paused = bool(raw.get("paused", False))
+
     if trip == "multi":
         route = RouteConfig(
             name=name,
@@ -220,6 +226,7 @@ def _parse_route(raw: Any, index: int, defaults: SearchOptions, currency: str) -
             alert_below=int(alert_below) if alert_below else None,
             alert_drop_pct=float(alert_drop_pct) if alert_drop_pct else None,
             options=options,
+            paused=paused,
         )
         return route
 
@@ -259,6 +266,7 @@ def _parse_route(raw: Any, index: int, defaults: SearchOptions, currency: str) -
         alert_below=int(alert_below) if alert_below else None,
         alert_drop_pct=float(alert_drop_pct) if alert_drop_pct else None,
         options=options,
+        paused=paused,
     )
 
 

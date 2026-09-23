@@ -8,7 +8,7 @@ from tracker.alerts import Alert
 from tracker.notify import available_notifiers, deliver, format_alerts
 from tracker.notify.line import LineNotifier
 from tracker.notify.ntfy import NtfyNotifier, _encode_header, poll_messages
-from tracker.notify.telegram import TelegramNotifier, poll_updates
+from tracker.notify.telegram import TelegramNotifier, poll_updates, send_photo
 
 from conftest import make_quote
 
@@ -280,6 +280,50 @@ def test_telegram_surfaces_the_api_error_body():
             TelegramNotifier(token="t", chat_id="bad").send("s", "b")
     finally:
         telegram_mod.requests.post = orig
+
+
+def test_send_photo_posts_the_file_with_chat_id_and_caption(captured, tmp_path):
+    image = tmp_path / "chart.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfake-bytes")
+
+    send_photo("tok", "123", image, caption="台北-東京 近 90 天價格趨勢")
+
+    call = captured[0]
+    assert call["url"] == "https://api.telegram.org/bottok/sendPhoto"
+    assert call["data"] == {"chat_id": "123", "caption": "台北-東京 近 90 天價格趨勢"}
+    assert "photo" in call["files"]
+
+
+def test_send_photo_truncates_an_over_long_caption(captured, tmp_path):
+    image = tmp_path / "chart.png"
+    image.write_bytes(b"fake")
+
+    send_photo("tok", "123", image, caption="x" * 2000)
+
+    caption = captured[0]["data"]["caption"]
+    assert len(caption) == 1024
+    assert caption.endswith("…")
+
+
+def test_send_photo_surfaces_the_api_error_body():
+    def fake_post(*a, **k):
+        return FakeResponse(400, "photo too large")
+
+    import tracker.notify.telegram as telegram_mod
+
+    orig = telegram_mod.requests.post
+    telegram_mod.requests.post = fake_post
+    try:
+        image_path = __file__  # any real file on disk works, content is irrelevant
+        with pytest.raises(Exception, match="photo too large"):
+            send_photo("t", "bad", image_path)
+    finally:
+        telegram_mod.requests.post = orig
+
+
+def test_send_photo_raises_when_the_file_does_not_exist(tmp_path):
+    with pytest.raises(Exception, match="Telegram 傳圖失敗"):
+        send_photo("tok", "123", tmp_path / "missing.png")
 
 
 def test_telegram_poll_returns_text_and_ids(monkeypatch):

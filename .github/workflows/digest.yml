@@ -1,0 +1,45 @@
+name: Weekly survival digest
+
+# /run 只有真的觸發通知（或整輪查詢全部失敗）才會推播,一個「活著但一直沒
+# 便宜票」的追蹤器跟一個「早就靜靜壞掉」的追蹤器,從手機上看起來一模一樣。
+# 這個排程每週固定送一次「目前設定 + 每條路線最新查到的價格」,不管有沒有
+# 便宜票,讓你能確認它還在正常運作。
+
+on:
+  schedule:
+    # 05:11 UTC ≈ 週一台灣時間 13:11。刻意避開整點和 track.yml 的時間,
+    # 理由同 track.yml 那則排程的註解:GitHub 排程是 best-effort,整點負載高。
+    - cron: '11 5 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write   # 沒設 Telegram / ntfy / LINE 時的保底通知管道
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Send survival digest
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python -m tracker.cli digest | tee -a "$GITHUB_STEP_SUMMARY"

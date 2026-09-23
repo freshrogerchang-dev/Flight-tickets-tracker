@@ -13,8 +13,12 @@ import json
 
 import pytest
 
-from tracker.cli import _command_source, cmd_commands
+from tracker.cli import _command_source, cmd_chart, cmd_commands, cmd_digest
 from tracker.commands import Cursor
+from tracker.notify import NotifyError
+from tracker.store import PriceStore
+
+from conftest import make_quote
 
 
 def _args(tmp_path, **overrides):
@@ -459,6 +463,158 @@ routes:
     assert json.loads(state_path.read_text(encoding="utf-8")) == {}
 
 
+# ---------------------------------------------------------------- /chart
+
+
+CHART_ROUTES_YAML = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-布里斯本
+    from: TPE
+    to: BNE
+    trip: round
+    windows:
+      - depart: 2027-06-05
+        nights: 11
+    alert_below: 30000
+"""
+
+
+def _configure_ntfy(monkeypatch, message: str, *, sent: list):
+    """A command channel with no Telegram configured -- /chart has nowhere to send a photo.
+
+    Inbound polling (``NTFY_COMMAND_TOPIC``) and the outbound reply channel
+    (``NTFY_TOPIC``) are separate settings; both need to be set for a reply to
+    actually go anywhere, same as Telegram's one token covering both directions.
+    """
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("NTFY_COMMAND_TOPIC", "cmd-topic")
+    monkeypatch.setenv("COMMAND_SECRET", "s3cret")
+    monkeypatch.setenv("NTFY_TOPIC", "alert-topic")
+    monkeypatch.delenv("LINE_CHANNEL_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "tracker.notify.ntfy.poll_messages",
+        lambda topic, server=None, since="": [{"id": "1", "message": message}],
+    )
+    monkeypatch.setattr(
+        "tracker.notify.ntfy.NtfyNotifier.send",
+        lambda self, subject, body: sent.append((subject, body)),
+    )
+
+
+def test_cmd_commands_chart_without_telegram_configured_replies_with_a_note(tmp_path, monkeypatch):
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    sent = []
+    _configure_ntfy(monkeypatch, "s3cret /chart", sent=sent)
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path)))
+
+    assert rc == 0
+    assert "只能用 Telegram" in sent[0][1]
+
+
+def test_cmd_commands_chart_renders_and_sends_a_photo(tmp_path, monkeypatch):
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /chart", sent=sent)
+
+    rendered = []
+    photos = []
+    monkeypatch.setattr(
+        "tracker.chart.render_price_trend",
+        lambda rows, *, route_name, out_path: rendered.append(route_name) or out_path,
+    )
+    monkeypatch.setattr(
+        "tracker.notify.telegram.send_photo",
+        lambda token, chat_id, path, *, caption="": photos.append((token, chat_id, caption)),
+    )
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path)))
+
+    assert rc == 0
+    assert rendered == ["台北-布里斯本"]
+    assert photos == [("tok", "123", "台北-布里斯本 近 90 天價格趨勢")]
+    assert sent == [], "a successful chart send has nothing left to say as text"
+
+
+def test_cmd_commands_chart_reports_a_render_failure_as_text(tmp_path, monkeypatch):
+    from tracker.chart import ChartError
+
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /chart", sent=sent)
+    monkeypatch.setattr(
+        "tracker.chart.render_price_trend",
+        lambda rows, *, route_name, out_path: (_ for _ in ()).throw(
+            ChartError(f"[{route_name}] 歷史紀錄不到兩筆，還畫不出趨勢圖")
+        ),
+    )
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path)))
+
+    assert rc == 0
+    assert "歷史紀錄不到兩筆" in sent[0][1]
+
+
+def test_cmd_commands_chart_reports_a_send_failure_as_text(tmp_path, monkeypatch):
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    sent = []
+    _configure_telegram(monkeypatch, "s3cret /chart", sent=sent)
+    monkeypatch.setattr(
+        "tracker.chart.render_price_trend", lambda rows, *, route_name, out_path: out_path
+    )
+    monkeypatch.setattr(
+        "tracker.notify.telegram.send_photo",
+        lambda *a, **k: (_ for _ in ()).throw(NotifyError("Telegram 傳圖失敗: boom")),
+    )
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path)))
+
+    assert rc == 0
+    assert "傳圖失敗" in sent[0][1]
+
+
+def test_cmd_chart_saves_a_png_from_real_price_history(tmp_path, now, days_ago):
+    prices_path = tmp_path / "prices.csv"
+    store = PriceStore(prices_path)
+    store.append([make_quote(9000, route_name="台北-東京", fetched_at=days_ago(5))])
+    store.append([make_quote(8500, route_name="台北-東京", fetched_at=now)])
+
+    out_path = tmp_path / "out.png"
+    args = argparse.Namespace(route="台北-東京", prices=str(prices_path), days=90, out=str(out_path))
+
+    rc = cmd_chart(args)
+
+    assert rc == 0
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_cmd_chart_reports_missing_history_without_crashing(tmp_path, capsys):
+    args = argparse.Namespace(
+        route="沒有紀錄", prices=str(tmp_path / "prices.csv"), days=90, out=str(tmp_path / "out.png")
+    )
+
+    rc = cmd_chart(args)
+
+    assert rc == 1
+    assert "不到兩筆" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------- --message (webhook relay)
 
 
@@ -599,3 +755,72 @@ def test_cmd_commands_reports_a_poll_failure_without_raising(tmp_path, monkeypat
 
     assert cmd_commands(_args(tmp_path)) == 1
     assert "network is down" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- digest (periodic survival summary)
+
+
+def test_digest_reports_failure_when_no_channel_is_configured(tmp_path, monkeypatch, capsys):
+    for key in (
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "NTFY_TOPIC",
+        "LINE_CHANNEL_TOKEN",
+        "LINE_USER_ID",
+        "GITHUB_TOKEN",
+        "GITHUB_REPOSITORY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    rc = cmd_digest(argparse.Namespace(config=str(config_path), prices=str(tmp_path / "prices.csv")))
+
+    assert rc == 1
+    assert "沒有設定任何通知管道" in capsys.readouterr().err
+
+
+def test_digest_sends_route_settings_and_latest_prices(tmp_path, monkeypatch):
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    prices_path = tmp_path / "prices.csv"
+    store = PriceStore(prices_path)
+    store.append([make_quote(18928, route_name="台北-布里斯本", itinerary="TPE>BNE>TPE")])
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("LINE_CHANNEL_TOKEN", raising=False)
+    sent = []
+    monkeypatch.setattr(
+        "tracker.notify.telegram.TelegramNotifier.send",
+        lambda self, subject, body: sent.append((subject, body)),
+    )
+
+    rc = cmd_digest(argparse.Namespace(config=str(config_path), prices=str(prices_path)))
+
+    assert rc == 0
+    subject, body = sent[0]
+    assert "存活摘要" in subject
+    assert "[台北-布里斯本]" in body
+    assert "18,928" in body
+
+
+def test_digest_fails_when_every_channel_fails_to_send(tmp_path, monkeypatch):
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(CHART_ROUTES_YAML, encoding="utf-8")
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("LINE_CHANNEL_TOKEN", raising=False)
+
+    def boom(self, subject, body):
+        raise NotifyError("bot blocked")
+
+    monkeypatch.setattr("tracker.notify.telegram.TelegramNotifier.send", boom)
+
+    rc = cmd_digest(argparse.Namespace(config=str(config_path), prices=str(tmp_path / "prices.csv")))
+
+    assert rc == 1

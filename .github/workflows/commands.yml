@@ -41,8 +41,17 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      # /chart 需要 matplotlib（畫圖）和一套中文字型（圖表標題、座標軸都是
+      # 中文，matplotlib 內建字型完全不含中文字，不裝會整片畫成空白方塊）。
+      # 兩者都只在真的用到 /chart 時才裝，其餘每一則指令維持原本的安裝速度。
+      - name: Install matplotlib and a CJK font for /chart
+        if: contains(github.event.inputs.message, '/chart')
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y --no-install-recommends fonts-wqy-zenhei
+          echo "INSTALL_EXTRAS=[chart]" >> "$GITHUB_ENV"
+
       - name: Install
-        run: pip install -e .
+        run: pip install -e ".${INSTALL_EXTRAS:-}"
 
       - name: Read and apply commands
         id: apply

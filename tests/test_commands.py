@@ -808,12 +808,16 @@ def test_the_shipped_config_accepts_commands(shipped_config):
     """Whatever routes are currently tracked, the command channel must still drive them.
 
     Asserts on behaviour, not on the destinations -- routes.yaml is meant to change.
+    Targets the first route by name explicitly: with only a multi-city route
+    shipped, the no-@ default (first non-multi route) has nothing to pick.
     """
     listing = run("hunter2 /routes", shipped_config)
     assert listing.message and not listing.changed
 
+    first_route_name = load_config(shipped_config).routes[0].name
+
     before = shipped_config.read_text(encoding="utf-8")
-    assert run("hunter2 /price 24000", shipped_config).changed
+    assert run(f"hunter2 /price 24000 @{first_route_name}", shipped_config).changed
     expand_all(load_config(shipped_config))
 
     after = shipped_config.read_text(encoding="utf-8")

@@ -1,7 +1,7 @@
 # 機票追蹤設定檔 —— 這是唯一需要你編輯的檔案。
 #
-# 目前追：台北 → 雪梨(SYD) / 布里斯本(BNE)，2027-06-19 出發、2027-07-03 回程（14 晚）。
-# 兩個目的地放在同一條路線裡比價，只要直飛（max_stops: 0），不轉機。
+# 目前追：台北進雪梨(SYD)、布里斯本(BNE)出，開口式行程（進出不同城市）。
+# 2027-06-16 TPE→SYD，2027-06-29 BNE→TPE，只要直飛（max_stops: 0），不轉機。
 #
 # 改日期或路線之後，先跑 `flight-tracker run --dry-run` 確認查詢數沒爆掉。
 # 也可以從指令頻道（Telegram 或 ntfy）下 /scan /to /stops 等指令改，見 README〈從手機改航線〉。
@@ -25,18 +25,14 @@ defaults:
   max_stops: 0
 
 routes:
-  # 雪梨、布里斯本放在同一條路線、同一個 group，compare: true 讓
-  # `/report` 或 `report --group 台北-澳洲東岸` 把兩個目的地排名比較。
+  # 進出不同城市（開口式行程）：雪梨進、布里斯本出，一張票。
   - name: 台北-澳洲東岸
-    from: TPE
-    to: [SYD, BNE]
-    trip: round
-    compare: true
-    windows:
-      - depart: 2027-06-19
-        nights: 14
+    trip: multi
+    max_stops: 0
+    legs:
+      - {from: TPE, to: SYD, depart: 2027-06-16}
+      - {from: BNE, to: TPE, depart: 2027-06-29}
     alert_below: 30000
-    alert_drop_pct: 12
 
 # ── 其他寫法備忘 ──────────────────────────────────────────────
 #

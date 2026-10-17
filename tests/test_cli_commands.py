@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date
 
 import pytest
 
@@ -322,7 +323,7 @@ routes:
     # 台北-雪梨: four distinct itineraries (different depart dates), so the
     # 4th-cheapest must be left out once capped at 3.
     syd_rows = "".join(
-        f"2026-09-17T0{i}:00:00+00:00,台北-雪梨,,TPE>SYD>TPE,TPE,SYD,2027-06-0{i},2027-06-1{i},"
+        f"2026-09-17T0{i}:00:00+00:00,台北-雪梨,,TPE>SYD>TPE,TPE,SYD,2027-06-0{i},2027-06-1{i + 1},"
         f"{25000 + i * 1000},TWD,China Airlines,0,600,fast_flights,https://example.invalid/syd{i}\n"
         for i in range(1, 5)
     )
@@ -350,6 +351,61 @@ routes:
     assert "syd4" not in syd_section, "the 4th-cheapest (most expensive) itinerary must be dropped"
     # 台北-布里斯本 only ever had one itinerary
     assert body.count("TPE>BNE>TPE") == 1
+
+
+def test_cmd_commands_report_and_status_ignore_itineraries_no_longer_in_the_config(tmp_path, monkeypatch):
+    """After /scan or /to the old dates stay in prices.csv under the same route
+    name; being cheaper, they used to fill /report and hide the itinerary
+    actually being tracked now."""
+    routes_yaml = """\
+currency: TWD
+max_queries: 60
+defaults:
+  adults: 1
+  seat: economy
+  max_stops: 0
+routes:
+  - name: 台北-澳洲東岸
+    trip: multi
+    legs:
+      - {from: TPE, to: SYD, depart: 2027-06-16}
+      - {from: BNE, to: TPE, depart: 2027-06-29}
+    alert_below: 30000
+"""
+    config_path = tmp_path / "routes.yaml"
+    config_path.write_text(routes_yaml, encoding="utf-8")
+
+    header = (
+        "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
+        "airlines,stops,duration_minutes,source,url\n"
+    )
+    stale = "".join(
+        f"2026-10-16T05:00:00+00:00,台北-澳洲東岸,台北-澳洲東岸,TPE>{dst}>TPE,TPE,{dst},2027-06-19,2027-07-03,"
+        f"{price},TWD,EVA Air,0,530,kiwi,https://example.invalid/old{dst}\n"
+        for dst, price in (("SYD", 35301), ("BNE", 35488))
+    )
+    current = (
+        "2026-10-16T01:00:00+00:00,台北-澳洲東岸,,TPE>SYD / BNE>TPE,TPE,SYD,2027-06-16,,"
+        "38203,TWD,China Airlines,0,1085,fast_flights,https://example.invalid/now\n"
+    )
+    prices_path = tmp_path / "prices.csv"
+    prices_path.write_text(header + stale + current, encoding="utf-8")
+
+    sent = []
+    _configure_telegram(monkeypatch, "", sent=sent)
+    monkeypatch.setattr(
+        "tracker.notify.telegram.poll_updates",
+        lambda token, since="": [{"id": "1", "message": "s3cret /report"}, {"id": "2", "message": "s3cret /status"}],
+    )
+
+    rc = cmd_commands(_args(tmp_path, config=str(config_path), prices=str(prices_path)))
+
+    assert rc == 0
+    body = sent[0][1]
+    assert "TPE>SYD / BNE>TPE" in body
+    assert "38,203" in body
+    assert "35,301" not in body and "35,488" not in body
+    assert "old" not in body
 
 
 def test_cmd_commands_report_omits_a_missing_link(tmp_path, monkeypatch):
@@ -786,7 +842,17 @@ def test_digest_sends_route_settings_and_latest_prices(tmp_path, monkeypatch):
 
     prices_path = tmp_path / "prices.csv"
     store = PriceStore(prices_path)
-    store.append([make_quote(18928, route_name="台北-布里斯本", itinerary="TPE>BNE>TPE")])
+    store.append(
+        [
+            make_quote(
+                18928,
+                route_name="台北-布里斯本",
+                itinerary="TPE>BNE>TPE",
+                depart=date(2027, 6, 5),
+                ret=date(2027, 6, 16),
+            )
+        ]
+    )
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")

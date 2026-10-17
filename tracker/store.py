@@ -13,7 +13,7 @@ import statistics
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import Quote
+from .models import Quote, SearchSpec
 
 FIELDNAMES = [
     "fetched_at",
@@ -41,6 +41,11 @@ def _row_key(row: dict) -> str:
 
 def quote_key(quote: Quote) -> str:
     return f"{quote.itinerary}|{quote.depart.isoformat()}|{quote.ret.isoformat() if quote.ret else ''}|{quote.currency}"
+
+
+def spec_key(spec: SearchSpec) -> str:
+    """The row key a search's quotes will be stored under, before any are fetched."""
+    return f"{spec.itinerary}|{spec.depart.isoformat()}|{spec.ret.isoformat() if spec.ret else ''}|{spec.options.currency}"
 
 
 class PriceStore:
@@ -142,11 +147,21 @@ class PriceStore:
             return None
         return statistics.median(cheapest_per_run.values())
 
-    def cheapest_per_key(self, *, group: str | None = None, since: date | None = None) -> list[dict]:
-        """Latest-run cheapest row per itinerary, for the report command."""
+    def cheapest_per_key(
+        self, *, group: str | None = None, since: date | None = None, only: set[str] | None = None
+    ) -> list[dict]:
+        """Latest-run cheapest row per itinerary, for the report command.
+
+        ``only`` limits the result to these row keys (see ``spec_key``) -- the
+        itineraries ``routes.yaml`` tracks right now, so rows left over from
+        dates or destinations that have since been changed don't crowd out
+        the current ones.
+        """
         best: dict[str, dict] = {}
         for row in self.rows():
             if group and row.get("group") != group:
+                continue
+            if only is not None and _row_key(row) not in only:
                 continue
             if since:
                 try:
@@ -160,7 +175,9 @@ class PriceStore:
                 best[key] = row
         return sorted(best.values(), key=lambda r: int(r["price"]))
 
-    def top_n_per_route(self, *, n: int = 3, since: date | None = None) -> list[tuple[str, list[dict]]]:
+    def top_n_per_route(
+        self, *, n: int = 3, since: date | None = None, only: set[str] | None = None
+    ) -> list[tuple[str, list[dict]]]:
         """Each route's own ``n`` cheapest itineraries, ranked separately.
 
         Unlike ``cheapest_per_pair`` (one winner across a whole comparison
@@ -171,27 +188,28 @@ class PriceStore:
         Routes are returned cheapest-route-first, so the best deal leads.
         """
         by_route: dict[str, list[dict]] = {}
-        for row in self.cheapest_per_key(since=since):
+        for row in self.cheapest_per_key(since=since, only=only):
             bucket = by_route.setdefault(row["route_name"], [])
             if len(bucket) < n:
                 bucket.append(row)
         return sorted(by_route.items(), key=lambda item: int(item[1][0]["price"]))
 
-    def latest_per_route(self) -> list[dict]:
+    def latest_per_route(self, *, only: set[str] | None = None) -> list[dict]:
         """The cheapest quote from each route's most recent run, one row per route.
 
         For ``/status``: a snapshot of "what did we see last", not the
         all-time cheapest -- that's what ``/report`` is for.
         """
+        rows = [r for r in self.rows() if only is None or _row_key(r) in only]
         latest_stamp: dict[str, str] = {}
-        for row in self.rows():
+        for row in rows:
             name = row.get("route_name", "")
             stamp = row.get("fetched_at", "")
             if name not in latest_stamp or stamp > latest_stamp[name]:
                 latest_stamp[name] = stamp
 
         best: dict[str, dict] = {}
-        for row in self.rows():
+        for row in rows:
             name = row.get("route_name", "")
             if row.get("fetched_at") != latest_stamp.get(name):
                 continue
@@ -200,7 +218,9 @@ class PriceStore:
                 best[name] = row
         return sorted(best.values(), key=lambda r: r["route_name"])
 
-    def route_history(self, route_name: str, *, since: date | None = None) -> list[dict]:
+    def route_history(
+        self, route_name: str, *, since: date | None = None, only: set[str] | None = None
+    ) -> list[dict]:
         """Cheapest price per run for one route, oldest first.
 
         A run can price several itineraries for one route (a date sweep, a
@@ -211,6 +231,8 @@ class PriceStore:
         cheapest_per_run: dict[str, dict] = {}
         for row in self.rows():
             if row.get("route_name") != route_name:
+                continue
+            if only is not None and _row_key(row) not in only:
                 continue
             if since:
                 try:

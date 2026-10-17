@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import sys
 import tempfile
@@ -16,7 +17,7 @@ from .models import SearchOptions, SearchSpec
 from .notify import NotifyError, available_notifiers, deliver, format_alerts
 from .providers import ProviderError, get_provider
 from .runner import run as run_searches
-from .store import PriceStore
+from .store import PriceStore, spec_key
 
 DEFAULT_CONFIG = "routes.yaml"
 DEFAULT_PRICES = "data/prices.csv"
@@ -257,6 +258,29 @@ def _command_source():
     return None, None, secret
 
 
+def _current_keys(config_path: str) -> set[str] | None:
+    """Row keys of every itinerary ``routes.yaml`` tracks right now.
+
+    ``prices.csv`` keeps every quote ever fetched, so after ``/scan`` or ``/to``
+    (or a hand edit) the old dates still sit there under the same route name --
+    and being older, often cheaper -- they used to fill ``/report`` and hide the
+    itinerary actually being tracked. Paused routes still count: pausing is
+    "stop querying", not "forget what you saw".
+
+    ``None`` (no filtering) when the config can't be read, so a broken
+    ``routes.yaml`` degrades to showing everything rather than nothing.
+    """
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return None
+    return {
+        spec_key(spec)
+        for route in config.routes
+        for spec in expand_route(dataclasses.replace(route, paused=False))
+    }
+
+
 def _status_message(config_path: str, prices_path: str) -> str:
     """Route settings + the latest price seen per route.
 
@@ -272,7 +296,7 @@ def _status_message(config_path: str, prices_path: str) -> str:
     except ConfigError as exc:
         lines.append(f"讀不到設定檔：{exc}")
 
-    latest = PriceStore(prices_path).latest_per_route()
+    latest = PriceStore(prices_path).latest_per_route(only=_current_keys(config_path))
     if latest:
         lines.append("最新查到：")
         for row in latest:
@@ -314,7 +338,7 @@ def cmd_digest(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
-def _send_charts(route_names: list[str], prices_path: str) -> list[str]:
+def _send_charts(route_names: list[str], prices_path: str, config_path: str) -> list[str]:
     """Render and Telegram-send a price-trend PNG for each ``/chart`` request.
 
     Sent as its own photo message per route rather than through the generic
@@ -335,11 +359,12 @@ def _send_charts(route_names: list[str], prices_path: str) -> list[str]:
     from .notify.telegram import send_photo
 
     store = PriceStore(prices_path)
+    only = _current_keys(config_path)
     notes = []
     with tempfile.TemporaryDirectory() as tmp:
         chart_path = Path(tmp) / "chart.png"
         for name in route_names:
-            rows = store.route_history(name, since=date.today() - timedelta(days=90))
+            rows = store.route_history(name, since=date.today() - timedelta(days=90), only=only)
             try:
                 render_price_trend(rows, route_name=name, out_path=chart_path)
             except ChartError as exc:
@@ -419,7 +444,9 @@ def cmd_commands(args: argparse.Namespace) -> int:
 
     if report_now:
         store = PriceStore(args.prices)
-        grouped = store.top_n_per_route(n=3, since=date.today() - timedelta(days=30))
+        grouped = store.top_n_per_route(
+            n=3, since=date.today() - timedelta(days=30), only=_current_keys(args.config)
+        )
         if grouped:
             sections = []
             for route_name, rows in grouped:
@@ -446,7 +473,7 @@ def cmd_commands(args: argparse.Namespace) -> int:
         replies.append(f"已清空 {count} 筆已通知紀錄，之前通知過的低價下次符合門檻會再通知一次。")
 
     if chart_targets:
-        replies.extend(_send_charts(chart_targets, args.prices))
+        replies.extend(_send_charts(chart_targets, args.prices, args.config))
 
     # Sent through every configured notify channel, not just the one the
     # command arrived on -- someone running LINE + Telegram together should

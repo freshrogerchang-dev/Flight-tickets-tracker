@@ -32,7 +32,7 @@ routes:
     legs:
       - {from: TPE, to: SYD, depart: 2027-06-16}
       - {from: BNE, to: TPE, depart: 2027-06-29}
-    alert_below: 30000
+    alert_below: 40000
 
 # ── 其他寫法備忘 ──────────────────────────────────────────────
 #

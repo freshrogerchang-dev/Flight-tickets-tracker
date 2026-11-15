@@ -149,6 +149,33 @@ class Quote:
         return f"{self.depart.isoformat()}~{self.ret.isoformat()}" if self.ret else self.depart.isoformat()
 
 
+def combine_leg_quotes(spec: SearchSpec, leg_quotes: list[Quote], *, fetched_at: datetime | None = None) -> Quote:
+    """Price a multi-city ``spec`` as the sum of one cheapest quote per leg.
+
+    An approximation, not a real combined-ticket price -- an airline's own
+    multi-city fare can be cheaper than one-ways stitched together -- but real,
+    current data instead of nothing. ``source`` lists every provider involved,
+    so a leg that fell back to Kiwi shows up as ``fast_flights+kiwi``.
+    """
+    return Quote(
+        route_name=spec.route_name,
+        group=spec.group,
+        itinerary=spec.itinerary,
+        origin=spec.origin,
+        destination=spec.destination,
+        depart=spec.depart,
+        ret=spec.ret,
+        price=sum(q.price for q in leg_quotes),
+        currency=spec.options.currency,
+        airlines=tuple(dict.fromkeys(a for q in leg_quotes for a in q.airlines)),
+        stops=sum(q.stops for q in leg_quotes),
+        duration_minutes=sum(q.duration_minutes for q in leg_quotes),
+        url="\n".join(q.url for q in leg_quotes if q.url),
+        source="+".join(dict.fromkeys(q.source for q in leg_quotes if q.source)),
+        fetched_at=fetched_at or datetime.now(timezone.utc),
+    )
+
+
 @dataclass
 class Alert:
     """A quote that cleared the cheapness test, with the reason why."""

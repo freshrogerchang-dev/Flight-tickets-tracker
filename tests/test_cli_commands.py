@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -20,6 +20,9 @@ from tracker.notify import NotifyError
 from tracker.store import PriceStore
 
 from conftest import make_quote
+
+#: /report only looks back 30 days, so a fixed fetch date would age out.
+RECENT = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
 
 
 def _args(tmp_path, **overrides):
@@ -267,7 +270,7 @@ routes:
     prices_path.write_text(
         "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
         "airlines,stops,duration_minutes,source,url\n"
-        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        f"{RECENT}T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
         "18928,TWD,China Airlines,0,600,fast_flights,https://example.invalid/flight\n",
         encoding="utf-8",
     )
@@ -323,12 +326,12 @@ routes:
     # 台北-雪梨: four distinct itineraries (different depart dates), so the
     # 4th-cheapest must be left out once capped at 3.
     syd_rows = "".join(
-        f"2026-09-17T0{i}:00:00+00:00,台北-雪梨,,TPE>SYD>TPE,TPE,SYD,2027-06-0{i},2027-06-1{i + 1},"
+        f"{RECENT}T0{i}:00:00+00:00,台北-雪梨,,TPE>SYD>TPE,TPE,SYD,2027-06-0{i},2027-06-1{i + 1},"
         f"{25000 + i * 1000},TWD,China Airlines,0,600,fast_flights,https://example.invalid/syd{i}\n"
         for i in range(1, 5)
     )
     bne_row = (
-        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        f"{RECENT}T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
         "18928,TWD,EVA Air,0,600,fast_flights,https://example.invalid/bne\n"
     )
     prices_path = tmp_path / "prices.csv"
@@ -434,7 +437,7 @@ routes:
     prices_path.write_text(
         "fetched_at,route_name,group,itinerary,origin,destination,depart,ret,price,currency,"
         "airlines,stops,duration_minutes,source,url\n"
-        "2026-09-17T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
+        f"{RECENT}T01:00:00+00:00,台北-布里斯本,,TPE>BNE>TPE,TPE,BNE,2027-06-05,2027-06-16,"
         "18928,TWD,China Airlines,0,600,fast_flights,\n",
         encoding="utf-8",
     )

@@ -300,3 +300,77 @@ def test_report_ranks_a_comparison_group(monkeypatch, pieces, now):
 
     assert [r["destination"] for r in ranked] == ["KIX", "NRT", "FUK"]
     assert int(ranked[0]["price"]) == 9000
+
+
+# ---------------------------------------------------------------- multi-city per-leg fallback
+
+
+@pytest.fixture
+def open_jaw() -> RouteConfig:
+    return RouteConfig(
+        name="台北-澳洲東岸",
+        trip="multi",
+        legs=(("TPE", "SYD", date(2030, 6, 16)), ("BNE", "TPE", date(2030, 6, 29))),
+        alert_below=40000,
+        options=SearchOptions(max_stops=0),
+    )
+
+
+class GoogleLike(StubProvider):
+    """Fails a multi spec the way fast-flights does when one of its legs is empty."""
+
+    def __init__(self, name, prices, broken_leg):
+        super().__init__(name, prices)
+        self.broken_leg = broken_leg
+
+    def search(self, spec):
+        if spec.trip == "multi" or (spec.origin, spec.destination) == self.broken_leg:
+            self.calls += 1
+            raise ProviderError("查無航班")
+        return super().search(spec)
+
+
+class OneWayOnly(StubProvider):
+    """Kiwi: refuses multi-city specs outright."""
+
+    def search(self, spec):
+        if spec.trip == "multi":
+            self.calls += 1
+            raise ProviderError("kiwi: 不支援多段行程（multi）")
+        return super().search(spec)
+
+
+def test_a_multi_city_leg_that_google_misses_falls_back_to_kiwi(monkeypatch, open_jaw, pieces, now):
+    store, state = pieces
+    install(
+        monkeypatch,
+        fast_flights=GoogleLike("fast_flights", [22000], broken_leg=("TPE", "SYD")),
+        kiwi=OneWayOnly("kiwi", [18000]),
+    )
+    config = make_config(routes=(open_jaw,), providers=("fast_flights", "kiwi"))
+
+    result = run_searches(expand_route(open_jaw), config, store, state, pause=False, now=now, verbose=False)
+
+    assert result.failures == []
+    [quote] = result.quotes
+    assert quote.price == 18000 + 22000, "kiwi's TPE>SYD plus Google's BNE>TPE"
+    assert quote.itinerary == "TPE>SYD / BNE>TPE"
+    assert quote.source == "kiwi+fast_flights"
+    assert len(result.alerts) == 1
+
+
+def test_a_multi_city_leg_no_provider_can_price_is_still_a_failure(monkeypatch, open_jaw, pieces, now):
+    store, state = pieces
+    install(
+        monkeypatch,
+        fast_flights=GoogleLike("fast_flights", [22000], broken_leg=("TPE", "SYD")),
+        kiwi=StubProvider("kiwi", error="kiwi 查無航班"),
+    )
+    config = make_config(routes=(open_jaw,), providers=("fast_flights", "kiwi"))
+
+    result = run_searches(expand_route(open_jaw), config, store, state, pause=False, now=now, verbose=False)
+
+    assert result.quotes == []
+    [(_, reason)] = result.failures
+    assert "TPE>SYD 單段查詢也失敗" in reason
+    assert store.rows() == []

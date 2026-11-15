@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from .alerts import AlertState, evaluate
 from .config import Config, RouteConfig
-from .models import Alert, Quote, SearchSpec
+from .models import Alert, Quote, SearchSpec, combine_leg_quotes
 from .providers import ProviderError, get_provider
 from .store import PriceStore
 
@@ -59,6 +59,28 @@ def _search_with_fallback(spec: SearchSpec, provider_names: tuple[str, ...]) -> 
     return [], errors
 
 
+def _search_multi_per_leg(spec: SearchSpec, provider_names: tuple[str, ...]) -> tuple[list[Quote], list[str]]:
+    """Retry a failed multi-city search one leg at a time, each with its own fallback.
+
+    fast-flights already splits a multi-city spec into one-way legs, but if a
+    single leg comes back empty from Google the whole spec fails -- and Kiwi,
+    next in line, cannot take a multi-city spec at all. So one bad leg used to
+    lose the whole day's price. Searching leg by leg here lets that one leg
+    fall through to Kiwi while the other keeps its Google fare.
+    """
+    leg_quotes, errors = [], []
+    for leg in spec.legs:
+        leg_spec = SearchSpec(
+            legs=(leg,), trip="oneway", options=spec.options, route_name=spec.route_name, group=spec.group
+        )
+        quotes, leg_errors = _search_with_fallback(leg_spec, provider_names)
+        if not quotes:
+            errors.append(f"{leg.origin}>{leg.destination} 單段查詢也失敗：" + "；".join(leg_errors))
+            return [], errors
+        leg_quotes.append(quotes[0])
+    return [combine_leg_quotes(spec, leg_quotes)], errors
+
+
 def run(
     specs: list[SearchSpec],
     config: Config,
@@ -85,6 +107,9 @@ def run(
             print(f"[{index}/{len(specs)}] {spec.route_name}: {spec}", file=sys.stderr)
 
         quotes, errors = _search_with_fallback(spec, config.providers)
+        if not quotes and spec.trip == "multi" and len(spec.legs) > 1:
+            quotes, leg_errors = _search_multi_per_leg(spec, config.providers)
+            errors += leg_errors
         if not quotes:
             reason = "；".join(errors) or "沒有可用的 provider"
             result.failures.append((spec, reason))

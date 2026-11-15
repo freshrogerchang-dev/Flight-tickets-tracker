@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from ..models import FAST_FLIGHTS_TRIP, Quote, SearchSpec
+from ..models import FAST_FLIGHTS_TRIP, Quote, SearchSpec, combine_leg_quotes
 from . import ProviderError
 
 
@@ -101,10 +101,7 @@ class FastFlightsProvider:
         something fixable from here.
 
         Query each leg as its own one-way search instead and add the cheapest
-        fare from each together. This is an approximation, not a real
-        combined-ticket price -- an airline's own multi-city fare can be
-        cheaper than two one-ways stitched together -- but it is real, current
-        data instead of nothing.
+        fare from each together (see ``combine_leg_quotes``).
         """
         leg_quotes: list[Quote] = []
         for leg in spec.legs:
@@ -120,24 +117,7 @@ class FastFlightsProvider:
             except ProviderError as exc:
                 raise ProviderError(f"多段行程 {leg.origin}>{leg.destination} 這段查詢失敗：{exc}") from exc
 
-        combined = Quote(
-            route_name=spec.route_name,
-            group=spec.group,
-            itinerary=spec.itinerary,
-            origin=spec.origin,
-            destination=spec.destination,
-            depart=spec.depart,
-            ret=spec.ret,
-            price=sum(q.price for q in leg_quotes),
-            currency=spec.options.currency,
-            airlines=tuple(dict.fromkeys(a for q in leg_quotes for a in q.airlines)),
-            stops=sum(q.stops for q in leg_quotes),
-            duration_minutes=sum(q.duration_minutes for q in leg_quotes),
-            url="\n".join(q.url for q in leg_quotes if q.url),
-            source=self.name,
-            fetched_at=datetime.now(timezone.utc),
-        )
-        return [combined]
+        return [combine_leg_quotes(spec, leg_quotes)]
 
     def _to_quote(self, flight, spec: SearchSpec, url: str, fetched_at: datetime) -> Quote | None:
         price = getattr(flight, "price", None)
